@@ -1,0 +1,114 @@
+# Deploy photo-pipeline to VM on merge to main.
+#
+# Rsyncs the script and supporting files to ~/tools/photo-pipeline/
+# on the VM. Does NOT touch .env (secrets stay on VM).
+#
+# Required GitHub secrets:
+#   VM_SSH_PRIVATE_KEY  - SSH private key for alexcaldwell on the VM
+#   DISCORD_WEBHOOK_URL - Discord webhook URL for deploy notifications
+
+name: Deploy to VM
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-photo-pipeline
+  cancel-in-progress: false
+
+env:
+  VM_HOST: "alexcaldwell@mvd-clawbase"
+  VM_DIR: "~/tools/photo-pipeline"
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VM_SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          cat >> ~/.ssh/config <<'SSH_EOF'
+          Host openclaw-vm
+            HostName mvd-clawbase
+            User alexcaldwell
+            IdentityFile ~/.ssh/deploy_key
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+            LogLevel ERROR
+          SSH_EOF
+
+      - name: Ensure target directory exists
+        run: ssh openclaw-vm "mkdir -p ${{ env.VM_DIR }}"
+
+      - name: Rsync to VM
+        run: |
+          rsync \
+            --archive \
+            --compress \
+            --human-readable \
+            --itemize-changes \
+            --exclude='.git/' \
+            --exclude='.DS_Store' \
+            --exclude='.env' \
+            --exclude='.env.*' \
+            --rsh "ssh" \
+            ./ \
+            "openclaw-vm:${{ env.VM_DIR }}/"
+
+      - name: Notify Discord (success)
+        if: success()
+        env:
+          COMMIT_MSG_RAW: ${{ github.event.head_commit.message }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          COMMIT_MSG=$(echo "$COMMIT_MSG_RAW" | head -1)
+          jq -n \
+            --arg title "photo-pipeline Deployed" \
+            --arg desc "photo-pipeline synced to VM" \
+            --arg commit_link "[\`${GITHUB_SHA::7}\`]($COMMIT_URL)" \
+            --arg author "$ACTOR" \
+            --arg msg "$COMMIT_MSG" \
+            --arg url "$RUN_URL" \
+            '{embeds: [{title: $title, description: $desc, color: 3066993,
+              fields: [
+                {name: "Commit", value: $commit_link, inline: true},
+                {name: "Author", value: $author, inline: true},
+                {name: "Message", value: $msg, inline: false}
+              ], url: $url}]}' | \
+          curl -sS -H "Content-Type: application/json" -d @- "$DISCORD_WEBHOOK_URL"
+
+      - name: Notify Discord (failure)
+        if: failure()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          jq -n \
+            --arg title "photo-pipeline Deploy FAILED" \
+            --arg desc "photo-pipeline deploy to VM failed -- check the workflow run" \
+            --arg commit_link "[\`${GITHUB_SHA::7}\`]($COMMIT_URL)" \
+            --arg author "$ACTOR" \
+            --arg url "$RUN_URL" \
+            '{embeds: [{title: $title, description: $desc, color: 15158332,
+              fields: [
+                {name: "Commit", value: $commit_link, inline: true},
+                {name: "Author", value: $author, inline: true}
+              ], url: $url}]}' | \
+          curl -sS -H "Content-Type: application/json" -d @- "$DISCORD_WEBHOOK_URL"
