@@ -33,6 +33,42 @@ from pathlib import Path
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
 
+# Override the default urllib User-Agent — Cloudflare's bot-fight mode blocks
+# "Python-urllib/*" (error code 1010) on sites that have it enabled, which
+# breaks every WP REST call. A normal-looking UA is enough to pass.
+_opener = urllib.request.build_opener()
+_opener.addheaders = [("User-Agent", "cmbpix-photo-pipeline/1.0 (+https://github.com/anthropics)")]
+urllib.request.install_opener(_opener)
+
+
+def fetch_aws_secret(secret_id: str, region: str = "us-east-1") -> dict:
+    """Fetch a JSON secret from AWS Secrets Manager via the aws CLI.
+
+    Returns the parsed JSON as a dict. Shells out rather than importing boto3
+    to keep the pipeline single-file and stdlib-only.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "aws", "secretsmanager", "get-secret-value",
+                "--secret-id", secret_id,
+                "--region", region,
+                "--query", "SecretString",
+                "--output", "text",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=15,
+        )
+    except FileNotFoundError:
+        print("ERROR: aws CLI not found. Install it or drop --secret.", file=sys.stderr)
+        sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        print(f"ERROR: aws secretsmanager returned {e.returncode}: {e.stderr.strip()}", file=sys.stderr)
+        sys.exit(1)
+    return json.loads(result.stdout)
+
 
 def load_env(env_path: Path) -> dict[str, str]:
     """Parse a simple KEY=VALUE .env file."""
@@ -179,6 +215,30 @@ def sips_resize(src: Path, dst: Path, max_width: int, quality: int) -> None:
         )
 
 
+def wp_auth_header(wp_user: str, wp_password: str) -> str:
+    """Build a Basic auth header value."""
+    return "Basic " + base64.b64encode(f"{wp_user}:{wp_password}".encode()).decode()
+
+
+def wp_rest_request(
+    method: str,
+    url: str,
+    auth: str,
+    body: dict | None = None,
+    timeout: int = 30,
+) -> dict:
+    """Generic WP REST JSON request. Returns parsed response dict (or {} on empty body)."""
+    headers = {"Authorization": auth}
+    data = None
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        raw = resp.read().decode("utf-8")
+    return json.loads(raw) if raw else {}
+
+
 def wp_upload_media(
     image_path: Path,
     alt_text: str,
@@ -187,8 +247,13 @@ def wp_upload_media(
     wp_url: str,
     wp_user: str,
     wp_password: str,
+    attach_to: int | None = None,
 ) -> dict:
-    """Upload an image to WordPress via REST API, return media object."""
+    """Upload an image to WordPress via REST API, return media object.
+
+    If attach_to is provided, the media is attached to that post (post_parent set)
+    via the follow-up update call.
+    """
     upload_url = f"{wp_url}/wp-json/wp/v2/media"
 
     image_bytes = image_path.read_bytes()
@@ -200,7 +265,7 @@ def wp_upload_media(
     }
     content_type = mime_map.get(image_path.suffix.lower(), "image/jpeg")
 
-    auth_str = base64.b64encode(f"{wp_user}:{wp_password}".encode()).decode()
+    auth = wp_auth_header(wp_user, wp_password)
 
     req = urllib.request.Request(
         upload_url,
@@ -208,7 +273,7 @@ def wp_upload_media(
         headers={
             "Content-Type": content_type,
             "Content-Disposition": f'attachment; filename="{image_path.name}"',
-            "Authorization": f"Basic {auth_str}",
+            "Authorization": auth,
         },
         method="POST",
     )
@@ -217,26 +282,174 @@ def wp_upload_media(
         media = json.loads(resp.read().decode("utf-8"))
 
     media_id = media["id"]
-    update_url = f"{wp_url}/wp-json/wp/v2/media/{media_id}"
-    update_payload = json.dumps({
+    update_body = {
         "alt_text": alt_text,
         "caption": caption,
         "description": description,
-    }).encode("utf-8")
+    }
+    if attach_to:
+        update_body["post"] = attach_to
 
-    update_req = urllib.request.Request(
-        update_url,
-        data=update_payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Basic {auth_str}",
-        },
-        method="POST",
+    media = wp_rest_request(
+        "POST",
+        f"{wp_url}/wp-json/wp/v2/media/{media_id}",
+        auth,
+        body=update_body,
+        timeout=30,
     )
-    with urllib.request.urlopen(update_req, timeout=30) as resp:
-        media = json.loads(resp.read().decode("utf-8"))
 
     return media
+
+
+def wp_get_term_by_slug(
+    taxonomy: str,
+    slug: str,
+    wp_url: str,
+    auth: str,
+) -> dict | None:
+    """Look up a taxonomy term by slug. Returns term dict or None if not found."""
+    search_url = (
+        f"{wp_url}/wp-json/wp/v2/{taxonomy}"
+        f"?slug={urllib.request.quote(slug)}"
+    )
+    req = urllib.request.Request(search_url, headers={"Authorization": auth})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        results = json.loads(resp.read().decode("utf-8"))
+    return results[0] if results else None
+
+
+def wp_create_term(
+    taxonomy: str,
+    slug: str,
+    wp_url: str,
+    auth: str,
+) -> dict:
+    """Create a taxonomy term. Name is derived from slug (title-cased)."""
+    name = slug.replace("-", " ").replace("_", " ").title()
+    return wp_rest_request(
+        "POST",
+        f"{wp_url}/wp-json/wp/v2/{taxonomy}",
+        auth,
+        body={"name": name, "slug": slug},
+    )
+
+
+def wp_create_cpt_post(
+    cpt: str,
+    title: str,
+    status: str,
+    wp_url: str,
+    auth: str,
+    content: str = "",
+    menu_order: int | None = None,
+) -> dict:
+    """Create a post in a CPT. Returns post dict."""
+    body = {"title": title, "status": status, "content": content}
+    if menu_order is not None:
+        body["menu_order"] = menu_order
+    return wp_rest_request(
+        "POST",
+        f"{wp_url}/wp-json/wp/v2/{cpt}",
+        auth,
+        body=body,
+    )
+
+
+def wp_update_cpt_post(
+    cpt: str,
+    post_id: int,
+    fields: dict,
+    wp_url: str,
+    auth: str,
+) -> dict:
+    """PATCH-style update via REST POST (WP REST accepts POST for updates)."""
+    return wp_rest_request(
+        "POST",
+        f"{wp_url}/wp-json/wp/v2/{cpt}/{post_id}",
+        auth,
+        body=fields,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Modula gallery creation
+# ---------------------------------------------------------------------------
+# Modula stores its gallery content in two post-meta keys exposed via REST:
+#   - modulaSettings  (serialized array of display options)
+#   - modulaImages    (serialized list of image objects)
+# The plugin registers both as REST fields on the `modula-gallery` CPT, so we
+# can create a fully-populated gallery in one POST.
+
+MODULA_DEFAULT_SETTINGS = {
+    "type": "creative-gallery",
+    "lightbox": "fancybox",
+    "gutter": 10,
+    "height": 800,
+    "captionColor": "rgba(255,255,255,1)",
+    "enableTwitter": 0,
+    "enableFacebook": 0,
+}
+
+
+def build_modula_images(media_items: list[dict], analysis_results: list[dict]) -> list[dict]:
+    """Build the modulaImages payload from uploaded media + Gemini metadata.
+
+    media_items is the REST response list from /wp/v2/media. analysis_results
+    is the pipeline's per-image analysis (filename, alt_text, caption, ...).
+    They must be aligned index-by-index.
+    """
+    images = []
+    for i, media in enumerate(media_items):
+        meta = analysis_results[i]["metadata"] if i < len(analysis_results) else {}
+        alt = meta.get("alt_text") or media.get("alt_text", "") or ""
+        title = meta.get("seo_filename") or media.get("title", {}).get("rendered", "") or ""
+        description = meta.get("caption") or ""
+        images.append({
+            "id": media["id"],
+            "alt": alt,
+            "title": title,
+            "description": description,
+            "link": "",
+            "target": "",
+            "halign": "center",
+            "valign": "middle",
+            "width": 2,
+            "height": 2,
+            "togglelightbox": "",
+            "hide_title": "",
+        })
+    return images
+
+
+def wp_create_modula_gallery(
+    title: str,
+    status: str,
+    modula_images: list[dict],
+    wp_url: str,
+    auth: str,
+    settings_overrides: dict | None = None,
+    menu_order: int | None = None,
+) -> dict:
+    """Create a Modula gallery in one REST call. Returns the post dict."""
+    settings = dict(MODULA_DEFAULT_SETTINGS)
+    if settings_overrides:
+        settings.update(settings_overrides)
+
+    body = {
+        "title": title,
+        "status": status,
+        "modulaSettings": settings,
+        "modulaImages": modula_images,
+    }
+    if menu_order is not None:
+        body["menu_order"] = menu_order
+
+    return wp_rest_request(
+        "POST",
+        f"{wp_url}/wp-json/wp/v2/modula-gallery",
+        auth,
+        body=body,
+    )
 
 
 def wp_create_draft_post(
@@ -341,15 +554,56 @@ def main() -> None:
     parser.add_argument("--wp-url", type=str, default=None, help="WordPress URL (overrides .env WP_URL)")
     parser.add_argument("--wp-user", type=str, default=None, help="WordPress username (overrides .env WP_USER)")
     parser.add_argument("--wp-password", type=str, default=None, help="WordPress Application Password (overrides .env WP_APP_PASSWORD)")
+    parser.add_argument("--cpt", type=str, default=None,
+        help="Target a custom post type (e.g. 'gallery') instead of standard posts. "
+             "Images are attached to the post as children; no inline gallery block is written.")
+    parser.add_argument("--cpt-taxonomy", type=str, default=None,
+        help="Taxonomy slug used with --category (e.g. 'gallery_category').")
+    parser.add_argument("--category", type=str, default=None,
+        help="Taxonomy term slug to assign. Requires --cpt-taxonomy. Must exist "
+             "in WP unless --create-category is also passed.")
+    parser.add_argument("--create-category", action="store_true",
+        help="Opt-in: create the --category term if it doesn't exist. "
+             "SEO best practice is NOT to auto-create terms; prefer curating them in wp-admin.")
+    parser.add_argument("--featured", action="store_true",
+        help="Set _cmbpix_featured=1 on the created post (cmbpix gallery CPT).")
+    parser.add_argument("--menu-order", type=int, default=None,
+        help="menu_order for the new post (affects featured-grid ordering).")
+    parser.add_argument("--status", type=str, default="draft",
+        choices=["draft", "publish", "pending", "private"],
+        help="Post status for the created post (default: draft).")
+    parser.add_argument("--secret", type=str, default=None,
+        help="AWS Secrets Manager secret id holding pipeline credentials. "
+             "Expected JSON: {gemini_api_key, <target>: {url, user, app_password}, ...}")
+    parser.add_argument("--target", type=str, default=None,
+        help="Profile key inside the secret to use for WP credentials "
+             "(e.g. 'cmbpix_local', 'cmbpix_prod').")
+    parser.add_argument("--aws-region", type=str, default="us-east-1",
+        help="AWS region for --secret (default: us-east-1).")
     args = parser.parse_args()
 
     script_dir = Path(__file__).resolve().parent
     env = load_env(script_dir / ".env")
 
-    gemini_key = env.get("GEMINI_API_KEY", "")
-    wp_url = args.wp_url or env.get("WP_URL", "http://mvd-clawbase:8087")
-    wp_user = args.wp_user or env.get("WP_USER", "admin")
-    wp_password = args.wp_password or env.get("WP_APP_PASSWORD", "")
+    # Resolution order for each value: CLI arg > env var > AWS secret > .env file > default.
+    secret = fetch_aws_secret(args.secret, args.aws_region) if args.secret else {}
+    target_profile = secret.get(args.target, {}) if args.target else {}
+
+    def pick(cli_val, env_key, secret_key, profile_key, default=""):
+        if cli_val:
+            return cli_val
+        if os.environ.get(env_key):
+            return os.environ[env_key]
+        if secret_key and secret.get(secret_key):
+            return secret[secret_key]
+        if profile_key and target_profile.get(profile_key):
+            return target_profile[profile_key]
+        return env.get(env_key, default)
+
+    gemini_key  = pick(None,              "GEMINI_API_KEY",  "gemini_api_key", None)
+    wp_url      = pick(args.wp_url,       "WP_URL",          None,             "url",          "http://mvd-clawbase:8087")
+    wp_user     = pick(args.wp_user,      "WP_USER",         None,             "user",         "admin")
+    wp_password = pick(args.wp_password,  "WP_APP_PASSWORD", None,             "app_password", "")
     max_width = args.max_width or int(env.get("MAX_WIDTH", "1920"))
     quality = args.quality or int(env.get("JPEG_QUALITY", "85"))
 
@@ -447,6 +701,69 @@ def main() -> None:
         print("To upload, run again without --dry-run.")
         return
 
+    auth = wp_auth_header(wp_user, wp_password)
+
+    # -----------------------------------------------------------------------
+    # Pre-flight: validate --category / --cpt-taxonomy combo before doing work
+    # -----------------------------------------------------------------------
+    term_id = None
+    if args.category:
+        # Default taxonomy for modula-gallery is gallery_category. For other
+        # CPTs the user must supply --cpt-taxonomy explicitly.
+        taxonomy = args.cpt_taxonomy
+        if not taxonomy and args.cpt == "modula-gallery":
+            taxonomy = "gallery_category"
+        if not taxonomy:
+            print("ERROR: --category requires --cpt-taxonomy.", file=sys.stderr)
+            sys.exit(1)
+        term = wp_get_term_by_slug(taxonomy, args.category, wp_url, auth)
+        if term:
+            term_id = term["id"]
+            print(f"Category: {args.category} (term id {term_id})")
+        elif args.create_category:
+            new_term = wp_create_term(taxonomy, args.category, wp_url, auth)
+            term_id = new_term["id"]
+            print(f"Category: {args.category} (CREATED, term id {term_id})")
+        else:
+            print(
+                f"ERROR: Term '{args.category}' not found in taxonomy "
+                f"'{taxonomy}'. Create it in wp-admin, or pass "
+                f"--create-category to opt in to auto-creation.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    # -----------------------------------------------------------------------
+    # CPT path: decide whether to pre-create or create-after-upload.
+    #
+    # For modula-gallery we upload media first and then create the gallery in
+    # one REST call with the full modulaImages payload (Modula references
+    # attachments by ID only — no post_parent relationship needed).
+    #
+    # For any other CPT we use the legacy flow: create a draft post first,
+    # then upload media with attach_to=post_id.
+    # -----------------------------------------------------------------------
+    is_modula = args.cpt == "modula-gallery"
+    post_id = None
+    if args.cpt and not is_modula:
+        print()
+        print(f"Creating {args.cpt} post (draft) ...")
+        try:
+            post = wp_create_cpt_post(
+                cpt=args.cpt,
+                title=post_title,
+                status="draft",  # always draft during upload; flip to final at end
+                wp_url=wp_url,
+                auth=auth,
+                content="",
+                menu_order=args.menu_order,
+            )
+            post_id = post["id"]
+            print(f"  {args.cpt} id={post_id}")
+        except Exception as e:
+            print(f"  POST CREATION FAILED: {e}", file=sys.stderr)
+            sys.exit(1)
+
     print()
     print("Uploading to WordPress ...")
     media_items = []
@@ -463,6 +780,7 @@ def main() -> None:
                 wp_url=wp_url,
                 wp_user=wp_user,
                 wp_password=wp_password,
+                attach_to=post_id,  # None for modula-gallery; set for legacy CPT
             )
             media_items.append(media)
             print(f"       media_id={media['id']}  url={media['source_url']}")
@@ -473,27 +791,97 @@ def main() -> None:
         print("ERROR: No images were uploaded successfully.", file=sys.stderr)
         sys.exit(1)
 
-    print()
-    print("Creating draft post ...")
-    try:
-        post = wp_create_draft_post(
-            title=post_title,
-            media_items=media_items,
-            tags=all_tags,
-            wp_url=wp_url,
-            wp_user=wp_user,
-            wp_password=wp_password,
-        )
-        post_id = post["id"]
+    # -----------------------------------------------------------------------
+    # Create / finalize the gallery post
+    # -----------------------------------------------------------------------
+    if is_modula:
+        print()
+        print("Creating modula-gallery (draft) ...")
+        modula_images = build_modula_images(media_items, analysis_results)
+        try:
+            post = wp_create_modula_gallery(
+                title=post_title,
+                status="draft",
+                modula_images=modula_images,
+                wp_url=wp_url,
+                auth=auth,
+                menu_order=args.menu_order,
+            )
+            post_id = post["id"]
+            print(f"  modula-gallery id={post_id}")
+        except Exception as e:
+            print(f"  MODULA GALLERY CREATION FAILED: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        print()
+        print("Finalizing modula-gallery ...")
+        update_fields = {
+            "featured_media": media_items[0]["id"],
+            "status": args.status,
+        }
+        if args.featured:
+            update_fields["meta"] = {"_cmbpix_featured": True}
+        if term_id is not None:
+            # Default taxonomy for modula-gallery is gallery_category; allow
+            # override via --cpt-taxonomy for unusual setups.
+            taxonomy = args.cpt_taxonomy or "gallery_category"
+            update_fields[taxonomy] = [term_id]
+
+        try:
+            post = wp_update_cpt_post("modula-gallery", post_id, update_fields, wp_url, auth)
+        except Exception as e:
+            print(f"  MODULA GALLERY FINALIZE FAILED: {e}", file=sys.stderr)
+            sys.exit(1)
+
         edit_link = f"{wp_url}/wp-admin/post.php?post={post_id}&action=edit"
         preview_link = post.get("link", f"{wp_url}/?p={post_id}")
-
-        print(f"  Post created: id={post_id}")
         print(f"  Edit:    {edit_link}")
         print(f"  Preview: {preview_link}")
-    except Exception as e:
-        print(f"  POST CREATION FAILED: {e}", file=sys.stderr)
-        sys.exit(1)
+
+    elif args.cpt:
+        print()
+        print(f"Finalizing {args.cpt} post ...")
+        update_fields = {
+            "featured_media": media_items[0]["id"],
+            "status": args.status,
+        }
+        if args.featured:
+            update_fields["meta"] = {"_cmbpix_featured": True}
+        if term_id is not None:
+            update_fields[args.cpt_taxonomy] = [term_id]
+
+        try:
+            post = wp_update_cpt_post(args.cpt, post_id, update_fields, wp_url, auth)
+        except Exception as e:
+            print(f"  POST FINALIZE FAILED: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        edit_link = f"{wp_url}/wp-admin/post.php?post={post_id}&action=edit"
+        preview_link = post.get("link", f"{wp_url}/?p={post_id}")
+        print(f"  Edit:    {edit_link}")
+        print(f"  Preview: {preview_link}")
+    else:
+        print()
+        print("Creating draft post ...")
+        try:
+            post = wp_create_draft_post(
+                title=post_title,
+                media_items=media_items,
+                tags=all_tags,
+                wp_url=wp_url,
+                wp_user=wp_user,
+                wp_password=wp_password,
+            )
+            post_id = post["id"]
+            edit_link = f"{wp_url}/wp-admin/post.php?post={post_id}&action=edit"
+            preview_link = post.get("link", f"{wp_url}/?p={post_id}")
+
+            print(f"  Post created: id={post_id}")
+            print(f"  Edit:    {edit_link}")
+            print(f"  Preview: {preview_link}")
+        except Exception as e:
+            print(f"  POST CREATION FAILED: {e}", file=sys.stderr)
+            sys.exit(1)
 
     summary = {
         "post_id": post_id,

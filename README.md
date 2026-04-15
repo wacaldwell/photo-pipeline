@@ -15,6 +15,27 @@ REST API and creates a gallery draft post.
 3. **WP REST API** uploads images and creates a draft gallery post
 4. You review the draft and publish when ready
 
+## Modula gallery support (`--cpt modula-gallery`)
+
+When `--cpt modula-gallery` is passed, the pipeline creates a Modula Gallery
+(not a standard post or a generic CPT). Flow:
+
+1. Upload each image to `/wp/v2/media` — no `post_parent` linkage
+   (Modula references images by WP attachment ID only).
+2. POST `/wp/v2/modula-gallery` with `modulaSettings` and `modulaImages`
+   built from the uploaded attachment IDs + per-image Gemini metadata.
+   This creates a fully-populated gallery in one REST call.
+3. PATCH the new gallery with `featured_media` (first image as cover),
+   `meta._cmbpix_featured` (if `--featured`), `gallery_category` taxonomy
+   term (if `--category`), `menu_order`, and final `status`.
+
+Default Modula settings: `creative-gallery` grid, FancyBox lightbox,
+10px gutter, 800px height. Override the helper in `wp_create_modula_gallery`
+in code if you need different defaults.
+
+This is the path cmbpix.com uses — see `.claude/skills/cmbpix-publish` in
+the cmbpix theme repo for the orchestration skill.
+
 ## Prerequisites
 
 - Python 3.10+ (stdlib only, no pip packages)
@@ -62,24 +83,27 @@ python3 photo-pipeline.py /path/to/album --wp-url http://myhost:8087
 - `summary.json` with post URL and stats
 - A WordPress draft post with a gallery block and tags
 
-## Discord workflow (OpenClaw)
+## cmbpix.com workflow (primary)
 
-The pipeline integrates with OpenClaw's agent system for hands-off
-album processing:
+The pipeline is driven directly from Claude Code via the `cmbpix-publish`
+skill that lives in the cmbpix theme repo (`.claude/skills/cmbpix-publish/`).
+The skill picks the `--target` (local dev on `tools`, or prod Lightsail),
+pulls WP app password + Gemini key from AWS Secrets Manager
+(`wordpress-mcp/photo-pipeline`), and runs this pipeline with
+`--cpt modula-gallery`. Draft is created on the target site, skill hands
+you the `edit_url`, you review and flip to publish.
 
-1. Drop an album folder into the site's `incoming/` directory on the
-   SMB share (e.g. `smb://openclaw/<site>/incoming/album-name/`)
-2. In Discord: `@builderbot process album album-name on cmbpix`
-3. **Malory** delegates to **Cheryl** (photo agent)
-4. Cheryl runs the pipeline against
-   `/srv/wordpress-media/<site>/incoming/<album>/`
-5. Draft URL and stats are posted back to Discord
+No Cheryl/Malory/incoming/SMB flow. That earlier OpenClaw path has been
+retired for cmbpix. If you're running the pipeline for cmbpix, use the
+skill; for other sites, invoke the pipeline directly with the appropriate
+`--secret` / `--target` / `--cpt` flags.
 
 ## Deployment
 
-On the VM, the script lives at `~/tools/photo-pipeline/`. The GitHub
-Actions workflow rsyncs on push to `main`. The `.env` file is managed
-manually on the VM and excluded from deploy.
+The pipeline runs from the user's Mac (or any host with AWS SSO access).
+It does not need to be deployed to a VM — it uploads over HTTPS to the
+target WordPress REST API. The `.env` file is optional (used if not
+pulling config from AWS Secrets Manager).
 
 ## Cost
 
