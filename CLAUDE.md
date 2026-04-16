@@ -54,11 +54,18 @@ All HTTP via `urllib` (no `requests`). **Global UA override** installed at modul
 
 ## Deployment
 
-The pipeline runs from the user's Mac (or any host with AWS SSO). It uploads over HTTPS to the target WordPress REST API — no VM required. There is no CI/CD; the old `deploy-to-vm.yml` workflow was deleted on 2026-04-16 (never worked after Feb 19, no self-hosted runner registered).
+The pipeline runs from any host that has AWS credentials for the `clownshow` profile with read access to the `wordpress-mcp/photo-pipeline` secret. It uploads over HTTPS to the target WordPress REST API. There is no CI/CD; the old `deploy-to-vm.yml` workflow was deleted on 2026-04-16 (never worked after Feb 19, no self-hosted runner registered).
+
+Deployment targets:
+- **Mac** (user-driven, interactive): AWS SSO, Modula gallery via `cmbpix-publish` skill.
+- **OpenClaw VM `mvd-clawbase`** (agent-driven, headless): IAM user credentials in `~/.aws/credentials`, Modula gallery via Malory → Cheryl → this pipeline. Photos arrive via SMB mount from the NAS (`/srv/wordpress-media/cmbpix/incoming/<album>/`).
 
 ## Orchestration
 
-For cmbpix.com, the pipeline is driven by the `cmbpix-publish` skill in `~/code/websites/cmbpix.com-new/.claude/skills/cmbpix-publish/`. Read that skill's SKILL.md for the current orchestration contract (target selection, draft review, status flip, Cloudflare purge). The old OpenClaw/Cheryl/Malory/SMB-incoming flow is retired for cmbpix.
+Two live orchestrators, both produce Modula draft galleries on cmbpix:
+
+- **Mac**: `cmbpix-publish` skill in the cmbpix theme repo (`~/code/websites/cmbpix.com-new/.claude/skills/cmbpix-publish/`). Handles target selection, draft review, status flip, Cloudflare purge.
+- **OpenClaw VM**: Malory receives a request, delegates to Cheryl, Cheryl invokes the pipeline using the template in the `media/photo-pipeline` skill in `crawdad-skills`. Krieger is no longer in this chain — the pipeline does the full WP roundtrip itself.
 
 ## Skill parity (OpenClaw agents)
 
