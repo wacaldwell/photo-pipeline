@@ -1032,6 +1032,11 @@ def main() -> None:
     print()
     print("Uploading to WordPress ...")
     media_items = []
+    # Parallel list of the analysis_results that correspond to each successful
+    # upload — same length as media_items, same order. We can't index
+    # analysis_results by position because failed uploads shift the alignment
+    # and cause Modula to pair images with the wrong metadata.
+    analysis_for_media: list[dict] = []
     for i, item in enumerate(analysis_results, 1):
         prepared = Path(item["prepared"])
         meta = item["metadata"]
@@ -1048,6 +1053,7 @@ def main() -> None:
                 attach_to=post_id,  # None for modula-gallery; set for legacy CPT
             )
             media_items.append(media)
+            analysis_for_media.append(item)
             print(f"       media_id={media['id']}  url={media['source_url']}")
         except Exception as e:
             print(f"       UPLOAD FAILED: {e}", file=sys.stderr)
@@ -1062,7 +1068,7 @@ def main() -> None:
     if is_modula:
         print()
         print("Creating modula-gallery (draft) ...")
-        modula_images = build_modula_images(media_items, analysis_results)
+        modula_images = build_modula_images(media_items, analysis_for_media)
         try:
             post = wp_create_modula_gallery(
                 title=post_title,
