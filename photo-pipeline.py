@@ -23,6 +23,7 @@ import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -212,6 +213,208 @@ def sips_resize(src: Path, dst: Path, max_width: int, quality: int) -> None:
             ],
             capture_output=True,
             check=True,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Image validation (pre-Gemini quality gate)
+# ---------------------------------------------------------------------------
+# Probes each image for dimensions / format / colorspace via (in order):
+#   1. ImageMagick `identify` (most portable, most detailed)
+#   2. macOS `sips`
+#   3. Minimal JPEG/PNG header reader from Python stdlib (last resort — gives
+#      dimensions only, no colorspace)
+#
+# Rejected images skip both Gemini analysis and WordPress upload; warn-level
+# images continue but are flagged in manifest.json.
+
+
+def _probe_identify(path: Path) -> dict:
+    """Use ImageMagick `identify`. Returns {} on any failure."""
+    try:
+        result = subprocess.run(
+            ["identify", "-format", "%w %h %m %[colorspace]", str(path)],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return {}
+    if result.returncode != 0 or not result.stdout.strip():
+        return {}
+    parts = result.stdout.strip().split(None, 3)
+    if len(parts) < 3:
+        return {}
+    try:
+        return {
+            "width": int(parts[0]),
+            "height": int(parts[1]),
+            "format": parts[2].lower(),
+            "colorspace": parts[3].lower() if len(parts) > 3 else "unknown",
+        }
+    except ValueError:
+        return {}
+
+
+def _probe_sips(path: Path) -> dict:
+    """Use macOS `sips`. Returns {} on any failure."""
+    try:
+        result = subprocess.run(
+            ["sips", "-g", "pixelWidth", "-g", "pixelHeight",
+             "-g", "format", "-g", "space", str(path)],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return {}
+    if result.returncode != 0:
+        return {}
+    w = re.search(r"pixelWidth:\s*(\d+)", result.stdout)
+    h = re.search(r"pixelHeight:\s*(\d+)", result.stdout)
+    f = re.search(r"format:\s*(\S+)", result.stdout)
+    s = re.search(r"space:\s*(\S+)", result.stdout)
+    if not (w and h):
+        return {}
+    return {
+        "width": int(w.group(1)),
+        "height": int(h.group(1)),
+        "format": f.group(1).lower() if f else path.suffix.lstrip(".").lower(),
+        "colorspace": s.group(1).lower() if s else "unknown",
+    }
+
+
+def _probe_stdlib(path: Path) -> dict:
+    """Minimal JPEG/PNG header reader. Dimensions only; colorspace unknown."""
+    try:
+        with path.open("rb") as f:
+            head = f.read(24)
+            if len(head) < 24:
+                return {}
+            # PNG: 8-byte magic, then IHDR (width@16, height@20)
+            if head[:8] == b"\x89PNG\r\n\x1a\n":
+                w, h = struct.unpack(">II", head[16:24])
+                return {"width": w, "height": h, "format": "png", "colorspace": "unknown"}
+            # JPEG: scan segments for SOF0/1/2/3 markers
+            if head[:2] == b"\xff\xd8":
+                f.seek(2)
+                while True:
+                    b = f.read(1)
+                    while b and b != b"\xff":
+                        b = f.read(1)
+                    while b == b"\xff":
+                        b = f.read(1)
+                    if not b:
+                        break
+                    marker = b[0]
+                    if marker in (0xC0, 0xC1, 0xC2, 0xC3):  # SOF markers
+                        f.read(3)  # length (2) + precision (1)
+                        h, w = struct.unpack(">HH", f.read(4))
+                        return {"width": w, "height": h, "format": "jpeg", "colorspace": "unknown"}
+                    length_bytes = f.read(2)
+                    if len(length_bytes) < 2:
+                        break
+                    length = struct.unpack(">H", length_bytes)[0]
+                    f.read(length - 2)
+    except (OSError, struct.error):
+        pass
+    return {}
+
+
+def probe_image(path: Path) -> dict:
+    """Return {width, height, format, colorspace} via first working backend."""
+    for probe in (_probe_identify, _probe_sips, _probe_stdlib):
+        result = probe(path)
+        if result.get("width") and result.get("height"):
+            return result
+    return {}
+
+
+def validate_image(
+    path: Path,
+    min_width_warn: int,
+    min_width_hard: int,
+    max_size_mb_warn: float,
+    max_size_mb_hard: float,
+    aspect_min: float,
+    aspect_max: float,
+    require_srgb: bool,
+    strict: bool,
+) -> dict:
+    """Validate an image against policy. Returns a dict with:
+      status: "ok" | "warn" | "reject"
+      issues: list of "[level] message" strings
+      file_size, width, height, aspect, format, colorspace (best-effort)
+    """
+    issues: list[str] = []
+    worst = "ok"
+
+    def note(level: str, msg: str) -> None:
+        nonlocal worst
+        issues.append(f"[{level}] {msg}")
+        effective = "reject" if (level == "warn" and strict) else level
+        rank = {"ok": 0, "warn": 1, "reject": 2}
+        if rank[effective] > rank[worst]:
+            worst = effective
+
+    try:
+        size_bytes = path.stat().st_size
+    except OSError as e:
+        return {"status": "reject", "issues": [f"[reject] stat failed: {e}"],
+                "file_size": 0, "width": None, "height": None,
+                "aspect": None, "format": None, "colorspace": None}
+
+    size_mb = size_bytes / 1_048_576
+    if size_bytes == 0:
+        note("reject", "zero-byte file")
+    elif size_mb >= max_size_mb_hard:
+        note("reject", f"file size {size_mb:.1f} MB >= {max_size_mb_hard} MB (hard limit)")
+    elif size_mb >= max_size_mb_warn:
+        note("warn", f"file size {size_mb:.1f} MB >= {max_size_mb_warn} MB (consider resizing)")
+
+    probe = probe_image(path)
+    w = probe.get("width")
+    h = probe.get("height")
+    if not w or not h:
+        note("reject", "could not read image dimensions (corrupted or unsupported)")
+        return {"status": "reject", "issues": issues, "file_size": size_bytes,
+                "width": None, "height": None, "aspect": None,
+                "format": None, "colorspace": None}
+
+    aspect = w / h
+    if w < min_width_hard:
+        note("reject", f"width {w}px < {min_width_hard}px (hard min)")
+    elif w < min_width_warn:
+        note("warn", f"width {w}px < {min_width_warn}px (soft min)")
+
+    if aspect < aspect_min or aspect > aspect_max:
+        note("reject", f"aspect ratio {aspect:.2f} outside [{aspect_min}, {aspect_max}]")
+
+    if require_srgb:
+        cs = (probe.get("colorspace") or "").lower()
+        if "srgb" not in cs and cs not in ("rgb", "unknown"):
+            note("warn", f"colorspace '{cs}' is not sRGB")
+
+    return {
+        "status": worst,
+        "issues": issues,
+        "file_size": size_bytes,
+        "width": w,
+        "height": h,
+        "aspect": round(aspect, 3),
+        "format": probe.get("format"),
+        "colorspace": probe.get("colorspace"),
+    }
+
+
+def parse_aspect_range(s: str) -> tuple[float, float]:
+    """Parse 'LOW:HIGH' to (low, high). Used by --aspect-range."""
+    try:
+        lo, hi = s.split(":", 1)
+        low = float(lo)
+        high = float(hi)
+        if low <= 0 or high <= low:
+            raise ValueError
+        return low, high
+    except (ValueError, AttributeError):
+        raise argparse.ArgumentTypeError(
+            f"Invalid --aspect-range '{s}'. Expected 'LOW:HIGH' with 0 < LOW < HIGH (e.g. '0.4:2.5')."
         )
 
 
@@ -580,6 +783,24 @@ def main() -> None:
              "(e.g. 'cmbpix_local', 'cmbpix_prod').")
     parser.add_argument("--aws-region", type=str, default="us-east-1",
         help="AWS region for --secret (default: us-east-1).")
+    parser.add_argument("--min-width", type=int, default=1200,
+        help="Soft-warn min image width in pixels (default: 1200).")
+    parser.add_argument("--min-width-hard", type=int, default=800,
+        help="Hard-reject min image width in pixels (default: 800).")
+    parser.add_argument("--max-file-size-mb", type=float, default=15.0,
+        help="Hard-reject file size >= this (MB). Default: 15.")
+    parser.add_argument("--max-file-size-warn-mb", type=float, default=5.0,
+        help="Soft-warn file size >= this (MB). Default: 5.")
+    parser.add_argument("--aspect-range", type=str, default="0.4:2.5",
+        help="Accepted aspect ratio range LOW:HIGH (default: 0.4:2.5). "
+             "Rejects images outside this range.")
+    parser.add_argument("--require-srgb", action="store_true",
+        help="Warn if image colorspace is not sRGB (off by default; brittle "
+             "across probe backends).")
+    parser.add_argument("--strict", action="store_true",
+        help="Promote all validation warnings to hard rejects.")
+    parser.add_argument("--no-validate", action="store_true",
+        help="Skip the validation pass entirely (not recommended).")
     args = parser.parse_args()
 
     script_dir = Path(__file__).resolve().parent
@@ -623,6 +844,49 @@ def main() -> None:
     if not images:
         print(f"ERROR: No supported images found in {album}", file=sys.stderr)
         sys.exit(1)
+
+    # -----------------------------------------------------------------------
+    # Validation pass — runs BEFORE Gemini so rejected images don't burn
+    # credits. Warn-level images continue; reject-level are dropped from the
+    # processing set.
+    # -----------------------------------------------------------------------
+    aspect_min, aspect_max = parse_aspect_range(args.aspect_range)
+    validation_map: dict[Path, dict] = {}
+
+    if args.no_validate:
+        for img in images:
+            validation_map[img] = {"status": "ok", "issues": ["validation skipped (--no-validate)"]}
+    else:
+        print(f"Validating {len(images)} image(s) ...")
+        n_ok = n_warn = n_reject = 0
+        for img in images:
+            v = validate_image(
+                img,
+                min_width_warn=args.min_width,
+                min_width_hard=args.min_width_hard,
+                max_size_mb_warn=args.max_file_size_warn_mb,
+                max_size_mb_hard=args.max_file_size_mb,
+                aspect_min=aspect_min,
+                aspect_max=aspect_max,
+                require_srgb=args.require_srgb,
+                strict=args.strict,
+            )
+            validation_map[img] = v
+            if v["status"] == "ok":
+                n_ok += 1
+            elif v["status"] == "warn":
+                n_warn += 1
+                print(f"  WARN   {img.name}: {'; '.join(v['issues'])}", file=sys.stderr)
+            else:
+                n_reject += 1
+                print(f"  REJECT {img.name}: {'; '.join(v['issues'])}", file=sys.stderr)
+        print(f"Validation: {n_ok} ok, {n_warn} warn, {n_reject} rejected")
+        print()
+
+        images = [img for img in images if validation_map[img]["status"] != "reject"]
+        if not images:
+            print("ERROR: all images rejected by validation. Nothing to process.", file=sys.stderr)
+            sys.exit(1)
 
     post_title = args.title or album.name.replace("-", " ").replace("_", " ").title()
     print(f"Album:  {album}")
@@ -686,6 +950,7 @@ def main() -> None:
             "prepared": str(dst),
             "filename": dst.name,
             "metadata": metadata,
+            "validation": validation_map.get(img, {"status": "ok", "issues": []}),
         })
         all_tags.append(metadata.get("tags", []))
 
