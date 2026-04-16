@@ -54,8 +54,18 @@ All HTTP via `urllib` (no `requests`). **Global UA override** installed at modul
 
 ## Deployment
 
-The pipeline runs from the user's Mac (or any host with AWS SSO). It uploads over HTTPS to the target WordPress REST API — no VM required. The old GitHub Actions deploy to `mvd-clawbase` is historical and no longer part of the cmbpix flow.
+The pipeline runs from the user's Mac (or any host with AWS SSO). It uploads over HTTPS to the target WordPress REST API — no VM required. There is no CI/CD; the old `deploy-to-vm.yml` workflow was deleted on 2026-04-16 (never worked after Feb 19, no self-hosted runner registered).
 
 ## Orchestration
 
 For cmbpix.com, the pipeline is driven by the `cmbpix-publish` skill in `~/code/websites/cmbpix.com-new/.claude/skills/cmbpix-publish/`. Read that skill's SKILL.md for the current orchestration contract (target selection, draft review, status flip, Cloudflare purge). The old OpenClaw/Cheryl/Malory/SMB-incoming flow is retired for cmbpix.
+
+## Skill parity (OpenClaw agents)
+
+For OpenClaw-agent use, this repo is mirrored by the `media/photo-pipeline` skill in `crawdad-skills` (`~/code/openclaw/skills/media/photo-pipeline/`). The skill does **not** ship a copy of `photo-pipeline.py` — its `install.sh` clones/pulls *this* repo into `~/tools/photo-pipeline/`, so the skill and repo cannot drift. When you change the pipeline:
+
+1. Commit here.
+2. Push to `main` on GitHub (`wacaldwell/photo-pipeline`).
+3. On the agent host, re-run `./install.sh` from the skill dir (fast-forwards the clone).
+
+Only touch the skill repo if you're changing the **invocation contract or agent docs** (SKILL.md, install.sh) — not the pipeline code itself.
