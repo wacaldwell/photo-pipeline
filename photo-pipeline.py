@@ -803,6 +803,17 @@ def main() -> None:
         help="Skip the validation pass entirely (not recommended).")
     args = parser.parse_args()
 
+    # Defensive default: cmbpix_* targets always mean a Modula gallery. The
+    # cmbpix theme is Modula-oriented and standard WP posts render poorly
+    # against it. Agents occasionally forget the flag — auto-apply it unless
+    # the caller explicitly picked a CPT.
+    if args.target and args.target.startswith("cmbpix_") and args.cpt is None:
+        args.cpt = "modula-gallery"
+        print(
+            "Note: --target cmbpix_* → defaulting --cpt modula-gallery.",
+            file=sys.stderr,
+        )
+
     script_dir = Path(__file__).resolve().parent
     env = load_env(script_dir / ".env")
 
