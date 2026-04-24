@@ -21,6 +21,7 @@ import argparse
 import base64
 import json
 import os
+import random
 import re
 import shutil
 import struct
@@ -155,7 +156,7 @@ def gemini_analyze_image(image_path: Path, api_key: str) -> dict:
         method="POST",
     )
 
-    max_retries = 4
+    max_retries = 7
     for attempt in range(max_retries):
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
@@ -164,8 +165,15 @@ def gemini_analyze_image(image_path: Path, api_key: str) -> dict:
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", errors="replace")
             if e.code == 429 and attempt < max_retries - 1:
-                wait = 2 ** (attempt + 1) + 1  # 3s, 5s, 9s, ...
-                print(f"  Rate limited (429), waiting {wait}s (attempt {attempt + 1}/{max_retries}) ...", file=sys.stderr)
+                # Prefer server's Retry-After; otherwise exponential backoff capped at 60s.
+                # Jitter avoids herd-retry on concurrent runs.
+                retry_after = e.headers.get("Retry-After") if e.headers else None
+                if retry_after and retry_after.strip().isdigit():
+                    wait = min(60.0, float(retry_after.strip()))
+                else:
+                    wait = min(60.0, 2 ** (attempt + 1) + 1)
+                wait += random.uniform(0, 1.5)
+                print(f"  Rate limited (429), waiting {wait:.1f}s (attempt {attempt + 1}/{max_retries}) ...", file=sys.stderr)
                 time.sleep(wait)
                 req = urllib.request.Request(
                     url,
