@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## What This Is
 
@@ -61,7 +61,7 @@ Deployment target:
 
 ## Orchestration
 
-The live cmbpix orchestrator is the **Mac** `cmbpix-publish` skill in the cmbpix theme repo (`~/code/websites/cmbpix.com-new/.claude/skills/cmbpix-publish/`). It handles target selection, draft review, status flip, and Cloudflare purge.
+The live cmbpix orchestrator is the **Mac** `cmbpix-publish` skill in the cmbpix theme repo (`~/code/websites/cmbpix.com-new/.Codex/skills/cmbpix-publish/`). It handles target selection, draft review, status flip, and Cloudflare purge.
 
 The old OpenClaw VM / Malory / Cheryl / incoming SMB flow is retired for cmbpix. Do not use it as the publishing path.
 
@@ -74,3 +74,24 @@ For agent use, this repo may be mirrored by the `media/photo-pipeline` skill in 
 3. On the agent host, re-run `./install.sh` from the skill dir (fast-forwards the clone).
 
 Only touch the skill repo if you're changing the **invocation contract or agent docs** (SKILL.md, install.sh) — not the pipeline code itself.
+
+
+<claude-mem-context>
+# Memory Context
+
+# [photo-pipeline] recent context, 2026-05-09 12:17pm EDT
+
+Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
+Format: ID TIME TYPE TITLE
+Fetch details: get_observations([IDs]) | Search: mem-search skill
+
+Stats: 4 obs (2,046t read) | 114,021t work | 98% savings
+
+### May 9, 2026
+161 12:14p 🔵 photo-pipeline: Gemini Vision → SEO Rename → WordPress Upload Pipeline
+162 12:15p 🔵 photo-pipeline Orchestration Architecture: Two Live Paths, One Retired
+163 " 🔵 photo-pipeline CLI Surface and Three Gallery Creation Modes
+164 12:16p ✅ AGENTS.md and CLAUDE.md Updated to Retire OpenClaw VM Publishing Path
+
+Access 114k tokens of past work via get_observations([IDs]) or mem-search skill.
+</claude-mem-context>
