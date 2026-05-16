@@ -87,6 +87,52 @@ def load_env(env_path: Path) -> dict[str, str]:
     return env
 
 
+def telegram_notify(
+    token: str,
+    chat_id: int | str,
+    thread_id: int,
+    title: str,
+    preview_url: str,
+    image_count: int,
+    timeout: float = 10.0,
+) -> None:
+    """Best-effort Telegram notification. Never raises.
+
+    Posts a plain-text sendMessage to the given chat + topic. On any HTTP or
+    transport error, prints a warning to stderr and returns. The pipeline's
+    exit code reflects WP upload success, not notification success.
+    """
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    text = f"📸 New gallery: {title} ({image_count} photos)\n👁 {preview_url}"
+    body = json.dumps({
+        "chat_id": chat_id,
+        "message_thread_id": thread_id,
+        "text": text,
+        "disable_web_page_preview": False,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            if resp.status >= 300:
+                print(
+                    f"WARN: Telegram notify returned HTTP {resp.status}",
+                    file=sys.stderr,
+                )
+    except urllib.error.HTTPError as e:
+        snippet = e.read()[:200].decode("utf-8", errors="replace") if e.fp else ""
+        print(
+            f"WARN: Telegram notify failed: HTTP {e.code} {e.reason} {snippet}",
+            file=sys.stderr,
+        )
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        print(f"WARN: Telegram notify failed: {e}", file=sys.stderr)
+
+
 def find_images(album_dir: Path) -> list[Path]:
     """Find all supported image files in the album directory."""
     images = []
