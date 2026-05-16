@@ -892,6 +892,9 @@ def main() -> None:
     wp_url      = pick(args.wp_url,       "WP_URL",          None,             "url",          "http://mvd-clawbase:8087")
     wp_user     = pick(args.wp_user,      "WP_USER",         None,             "user",         "admin")
     wp_password = pick(args.wp_password,  "WP_APP_PASSWORD", None,             "app_password", "")
+    tg_token   = pick(None, "TELEGRAM_BOT_TOKEN",                     "telegram_bot_token",                     None)
+    tg_chat    = pick(None, "TELEGRAM_CHAT_ID",                       "telegram_chat_id",                       None)
+    tg_thread  = pick(None, "TELEGRAM_CONTENT_CREATIVE_THREAD_ID",    "telegram_content_creative_thread_id",    None)
     max_width = args.max_width or int(env.get("MAX_WIDTH", "1920"))
     quality = args.quality or int(env.get("JPEG_QUALITY", "85"))
 
@@ -1232,6 +1235,32 @@ def main() -> None:
     }
     summary_path = work_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, indent=2))
+
+    if args.tele and not args.dry_run:
+        if tg_token and tg_chat and tg_thread:
+            try:
+                chat_id_val = int(tg_chat)
+            except (TypeError, ValueError):
+                chat_id_val = tg_chat
+            try:
+                thread_id_val = int(tg_thread)
+            except (TypeError, ValueError):
+                thread_id_val = tg_thread
+            telegram_notify(
+                token=tg_token,
+                chat_id=chat_id_val,
+                thread_id=thread_id_val,
+                title=post_title,
+                preview_url=preview_link,
+                image_count=len(media_items),
+            )
+        else:
+            print(
+                "WARN: --tele set but Telegram creds missing "
+                "(need telegram_bot_token, telegram_chat_id, "
+                "telegram_content_creative_thread_id); skipping notify.",
+                file=sys.stderr,
+            )
 
     print()
     print("Done.")
