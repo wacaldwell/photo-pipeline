@@ -107,18 +107,27 @@ Minimum input:
 - Credentials supplied through CLI flags, environment variables, AWS Secrets
   Manager, or `.env`.
 
-Recommended cmbpix production invocation:
+Recommended cmbpix production invocation (for agents):
 
 ```bash
-AWS_PROFILE=clownshow python3 photo-pipeline.py /path/to/album \
+AWS_PROFILE=hermes-photo-pipeline python3 photo-pipeline.py /path/to/album \
   --title "Album Title" \
   --secret wordpress-mcp/photo-pipeline \
   --target cmbpix_prod \
-  --status draft
+  --status draft \
+  --tele
 ```
 
 For `cmbpix_*` targets, the CLI automatically defaults to
 `--cpt modula-gallery` if no CPT is supplied.
+
+Credentials for agents: use the dedicated IAM profile
+`hermes-photo-pipeline` (scoped to one `secretsmanager:GetSecretValue` on
+this single secret), **not** the human SSO admin profile (`clownshow`).
+Provisioning + rotation is managed in
+[`clownshow-infra`](https://github.com/wacaldwell/clownshow-infra) →
+`iam/hermes-photo-pipeline/` (Terraform). If the profile isn't on the
+agent host, follow that module's README to provision it.
 
 Agent behavior:
 
@@ -128,8 +137,12 @@ Agent behavior:
 - Prefer `--status draft` so the user can review before publishing.
 - Add `--category <slug>` only when the user provides a known curated category.
 - Add `--featured` only when the user asks for a featured gallery.
-- Report the final `edit_url`, `preview_url`, `post_id`, and image counts from
-  `summary.json`.
+- **Pass `--tele` by default.** Sends a plain-text Telegram message with
+  the wp-admin edit URL to the user's content/creative topic on
+  successful publish. No-op under `--dry-run`. Notification failures only
+  warn — they never fail the pipeline.
+- Report the final `post_id`, `post_title`, `edit_url`, `preview_url`,
+  `images_uploaded`, and `images_analyzed` from `summary.json`.
 - On failure, report the command, exit status, and the relevant stderr/stdout
   lines. Do not retry with altered publishing flags unless the user asks.
 
