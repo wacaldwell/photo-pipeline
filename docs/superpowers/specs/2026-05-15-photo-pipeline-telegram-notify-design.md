@@ -56,7 +56,7 @@ def telegram_notify(
     chat_id: int | str,
     thread_id: int,
     title: str,
-    preview_url: str,
+    edit_url: str,
     image_count: int,
     timeout: float = 10.0,
 ) -> None
@@ -69,7 +69,7 @@ Behavior:
   {
     "chat_id": <chat_id>,
     "message_thread_id": <thread_id>,
-    "text": "📸 New gallery: <title> (<N> photos)\n👁 <preview_url>",
+    "text": "📸 New gallery: <title> (<N> photos)\n✏️ <edit_url>",
     "disable_web_page_preview": false
   }
   ```
@@ -87,7 +87,7 @@ if args.tele and not args.dry_run and post_id:
     if tg_token and tg_chat and tg_thread:
         telegram_notify(tg_token, tg_chat, tg_thread,
                         title=final_title,
-                        preview_url=preview_link,
+                        edit_url=edit_link,
                         image_count=len(uploaded_images))
     else:
         print("WARN: --tele set but Telegram creds missing; skipping notify.", file=sys.stderr)
@@ -101,12 +101,12 @@ Exactly two lines, plain text:
 
 ```
 📸 New gallery: Bagels (12 photos)
-👁 https://cmbpix.com/?p=12345&preview=true
+✏️ https://cmbpix.com/wp-admin/post.php?post=12345&action=edit
 ```
 
 - Title comes from the resolved `--title` (or directory-derived fallback) — same value already shown in `summary.json`.
 - Image count is `len(uploaded_images)` after the upload loop.
-- Preview URL is the same `preview_url` already written to `summary.json`.
+- Link is the wp-admin **edit URL** (`edit_url` from `summary.json`), not the public preview URL. The preview URL returns 404 to anonymous viewers while the post is still a draft, so it's not useful in a notification you receive on mobile before you've logged in. The edit URL drops you straight into wp-admin where you can review and publish.
 
 ## Failure modes
 

@@ -92,7 +92,7 @@ def telegram_notify(
     chat_id: int | str,
     thread_id: int,
     title: str,
-    preview_url: str,
+    edit_url: str,
     image_count: int,
     timeout: float = 10.0,
 ) -> None:
@@ -103,7 +103,7 @@ def telegram_notify(
     exit code reflects WP upload success, not notification success.
     """
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    text = f"📸 New gallery: {title} ({image_count} photos)\n👁 {preview_url}"
+    text = f"📸 New gallery: {title} ({image_count} photos)\n✏️ {edit_url}"
     body = json.dumps({
         "chat_id": chat_id,
         "message_thread_id": thread_id,
@@ -1251,7 +1251,7 @@ def main() -> None:
                 chat_id=chat_id_val,
                 thread_id=thread_id_val,
                 title=post_title,
-                preview_url=preview_link,
+                edit_url=edit_link,
                 image_count=len(media_items),
             )
         else:

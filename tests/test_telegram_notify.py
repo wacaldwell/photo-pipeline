@@ -38,7 +38,7 @@ class TelegramNotifyTests(unittest.TestCase):
                 chat_id=-1001234567890,
                 thread_id=42,
                 title="Bagels",
-                preview_url="https://example.com/?p=1",
+                edit_url="https://example.com/wp-admin/post.php?post=1&action=edit",
                 image_count=12,
             )
         self.assertEqual(mock_open.call_count, 1)
@@ -54,7 +54,7 @@ class TelegramNotifyTests(unittest.TestCase):
                 chat_id=-1001234567890,
                 thread_id=42,
                 title="Bagels",
-                preview_url="https://example.com/?p=1",
+                edit_url="https://example.com/wp-admin/post.php?post=1&action=edit",
                 image_count=12,
             )
         body = json.loads(mock_open.call_args[0][0].data.decode("utf-8"))
@@ -64,7 +64,7 @@ class TelegramNotifyTests(unittest.TestCase):
         self.assertNotIn("parse_mode", body)  # plain text — no markdown
         self.assertEqual(
             body["text"],
-            "📸 New gallery: Bagels (12 photos)\n👁 https://example.com/?p=1",
+            "📸 New gallery: Bagels (12 photos)\n✏️ https://example.com/wp-admin/post.php?post=1&action=edit",
         )
 
     def test_swallows_http_error(self):
@@ -80,7 +80,7 @@ class TelegramNotifyTests(unittest.TestCase):
             # Must NOT raise — notification is best-effort.
             photo_pipeline.telegram_notify(
                 token="T", chat_id=-1, thread_id=1,
-                title="x", preview_url="https://e/", image_count=1,
+                title="x", edit_url="https://e/", image_count=1,
             )
         self.assertIn("Telegram", buf.getvalue())
 
@@ -91,7 +91,7 @@ class TelegramNotifyTests(unittest.TestCase):
              redirect_stderr(buf):
             photo_pipeline.telegram_notify(
                 token="T", chat_id=-1, thread_id=1,
-                title="x", preview_url="https://e/", image_count=1,
+                title="x", edit_url="https://e/", image_count=1,
             )
         self.assertIn("Telegram", buf.getvalue())
 
