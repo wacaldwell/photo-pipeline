@@ -94,6 +94,45 @@ wp-admin edit URL (draft preview URLs return 404 to anonymous viewers,
 so the edit link is more useful in practice). No-op with `--dry-run`;
 failure to notify only warns — it never fails the pipeline.
 
+## Agent invocation contract
+
+`photo-pipeline.py` is the canonical implementation. Agents, skills, and
+local wrapper scripts should invoke this CLI directly instead of copying or
+reimplementing the pipeline logic.
+
+Minimum input:
+
+- An album directory containing supported image files: jpg, jpeg, png, webp,
+  tif, or tiff.
+- Credentials supplied through CLI flags, environment variables, AWS Secrets
+  Manager, or `.env`.
+
+Recommended cmbpix production invocation:
+
+```bash
+AWS_PROFILE=clownshow python3 photo-pipeline.py /path/to/album \
+  --title "Album Title" \
+  --secret wordpress-mcp/photo-pipeline \
+  --target cmbpix_prod \
+  --status draft
+```
+
+For `cmbpix_*` targets, the CLI automatically defaults to
+`--cpt modula-gallery` if no CPT is supplied.
+
+Agent behavior:
+
+- Treat the album path as the only required user-provided input.
+- Derive `--title` from the directory name unless the user gives a better
+  title.
+- Prefer `--status draft` so the user can review before publishing.
+- Add `--category <slug>` only when the user provides a known curated category.
+- Add `--featured` only when the user asks for a featured gallery.
+- Report the final `edit_url`, `preview_url`, `post_id`, and image counts from
+  `summary.json`.
+- On failure, report the command, exit status, and the relevant stderr/stdout
+  lines. Do not retry with altered publishing flags unless the user asks.
+
 ## Output
 
 - Renamed images in a temp working directory

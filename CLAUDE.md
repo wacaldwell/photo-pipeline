@@ -28,6 +28,35 @@ python3 photo-pipeline.py /path/to/album --title "My Photo Post"
 
 Config resolution: CLI arg > env var > AWS secret (via `--secret`) > `.env` file > default. The secret stores Gemini key + multi-target WP credentials as a single JSON blob; `--target` selects which site's creds to use (`cmbpix_local`, `cmbpix_prod`).
 
+## Agent Invocation Contract
+
+`photo-pipeline.py` is the canonical implementation. Agents, skills, and local wrapper scripts should invoke this CLI directly instead of copying or reimplementing pipeline logic.
+
+Minimum input:
+- An album directory containing supported image files: jpg, jpeg, png, webp, tif, or tiff.
+- Credentials supplied through CLI flags, environment variables, AWS Secrets Manager, or `.env`.
+
+Recommended cmbpix production invocation:
+
+```bash
+AWS_PROFILE=clownshow python3 photo-pipeline.py /path/to/album \
+  --title "Album Title" \
+  --secret wordpress-mcp/photo-pipeline \
+  --target cmbpix_prod \
+  --status draft
+```
+
+For `cmbpix_*` targets, the CLI automatically defaults to `--cpt modula-gallery` if no CPT is supplied.
+
+Agent behavior:
+- Treat the album path as the only required user-provided input.
+- Derive `--title` from the directory name unless the user gives a better title.
+- Prefer `--status draft` so the user can review before publishing.
+- Add `--category <slug>` only when the user provides a known curated category.
+- Add `--featured` only when the user asks for a featured gallery.
+- Report the final `edit_url`, `preview_url`, `post_id`, and image counts from `summary.json`.
+- On failure, report the command, exit status, and the relevant stderr/stdout lines. Do not retry with altered publishing flags unless the user asks.
+
 ## Architecture
 
 Everything lives in `photo-pipeline.py`. Sequential, functional, no classes:
@@ -65,12 +94,12 @@ The live cmbpix orchestrator is the **Mac** `cmbpix-publish` skill in the cmbpix
 
 The old OpenClaw VM / Malory / Cheryl / incoming SMB flow is retired for cmbpix. Do not use it as the publishing path.
 
-## Skill parity
+## Agent wrapper parity
 
-For agent use, this repo may be mirrored by the `media/photo-pipeline` skill in `crawdad-skills` (`~/code/openclaw/skills/media/photo-pipeline/`). The skill does **not** ship a copy of `photo-pipeline.py` — its `install.sh` clones/pulls *this* repo into `~/tools/photo-pipeline/`, so the skill and repo cannot drift. When you change the pipeline:
+For agent use, wrappers such as Hermes skills or the `media/photo-pipeline` skill in `crawdad-skills` may clone or pull this repo. Wrappers should call this repo's CLI and must not ship a forked copy of `photo-pipeline.py`, so the tool and wrapper contract cannot drift. When you change the pipeline:
 
 1. Commit here.
 2. Push to `main` on GitHub (`wacaldwell/photo-pipeline`).
-3. On the agent host, re-run `./install.sh` from the skill dir (fast-forwards the clone).
+3. On agent hosts, update the clone or rerun the wrapper's install step so it fast-forwards to the new version.
 
 Only touch the skill repo if you're changing the **invocation contract or agent docs** (SKILL.md, install.sh) — not the pipeline code itself.
