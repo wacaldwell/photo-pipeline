@@ -76,6 +76,23 @@ Override WordPress target:
 python3 photo-pipeline.py /path/to/album --wp-url http://myhost:8087
 ```
 
+With Telegram notification on publish:
+
+```bash
+AWS_PROFILE=clownshow python3 photo-pipeline.py /path/to/album \
+  --title "Bagels" \
+  --secret wordpress-mcp/photo-pipeline \
+  --target cmbpix_prod \
+  --status draft \
+  --tele
+```
+
+Requires `telegram_bot_token`, `telegram_chat_id`, and
+`telegram_content_creative_thread_id` in the AWS secret (or matching
+`TELEGRAM_*` env vars). Sends a plain-text message containing the preview
+URL to the content/creative topic. No-op with `--dry-run`; failure to
+notify only warns — it never fails the pipeline.
+
 ## Output
 
 - Renamed images in a temp working directory
