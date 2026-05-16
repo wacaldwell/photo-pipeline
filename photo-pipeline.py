@@ -117,12 +117,8 @@ def telegram_notify(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            if resp.status >= 300:
-                print(
-                    f"WARN: Telegram notify returned HTTP {resp.status}",
-                    file=sys.stderr,
-                )
+        with urllib.request.urlopen(req, timeout=timeout):
+            pass
     except urllib.error.HTTPError as e:
         snippet = e.read()[:200].decode("utf-8", errors="replace") if e.fp else ""
         print(
