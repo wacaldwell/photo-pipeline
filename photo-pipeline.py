@@ -851,6 +851,12 @@ def main() -> None:
         help="Promote all validation warnings to hard rejects.")
     parser.add_argument("--no-validate", action="store_true",
         help="Skip the validation pass entirely (not recommended).")
+    parser.add_argument("--tele", action="store_true",
+        help="On successful WP publish, send a Telegram message with the "
+             "preview URL to the content/creative topic. Requires "
+             "telegram_bot_token, telegram_chat_id, and "
+             "telegram_content_creative_thread_id in the AWS secret (or the "
+             "corresponding TELEGRAM_* env vars). No-op with --dry-run.")
     args = parser.parse_args()
 
     # Defensive default: cmbpix_* targets always mean a Modula gallery. The
