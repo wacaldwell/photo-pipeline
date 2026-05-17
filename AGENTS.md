@@ -116,3 +116,81 @@ For agent use, wrappers such as Hermes skills or the `media/photo-pipeline` skil
 3. On agent hosts, update the clone or rerun the wrapper's install step so it fast-forwards to the new version.
 
 Only touch the skill repo if you're changing the **invocation contract or agent docs** (SKILL.md, install.sh) — not the pipeline code itself.
+
+
+<claude-mem-context>
+# Memory Context
+
+# [photo-pipeline] recent context, 2026-05-17 9:29am EDT
+
+Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
+Format: ID TIME TYPE TITLE
+Fetch details: get_observations([IDs]) | Search: mem-search skill
+
+Stats: 50 obs (16,381t read) | 545,793t work | 97% savings
+
+### May 15, 2026
+S96 Spec approved; implementation plan written, committed, and user choosing execution approach (May 15 at 8:56 PM)
+S93 Status check on `--tele` Telegram notification feature for photo-pipeline (May 15 at 8:56 PM)
+### May 16, 2026
+S97 Continue working on photo-pipeline feat/telegram-notify branch — complete implementation, review, and prepare for merge (May 16 at 7:37 AM)
+305 9:31a 🟣 Telegram credential resolution wired into photo-pipeline main()
+306 " 🟣 Guarded telegram_notify() call site added after WP publish summary write
+307 " 🟣 Smoke test confirms --tele flag accepted by argparse without error
+304 9:57a 🟣 Task 4 complete: telegram_notify() call site wired into main()
+308 11:18a 🟣 All 4 telegram_notify unit tests pass after Task 4 wiring
+309 " 🟣 Task 4 committed: --tele wiring merged to feat/telegram-notify at 87fe8f9
+310 " 🟣 feat/telegram-notify branch commit history confirmed — 5 commits, Tasks 1-4 complete
+311 " 🔵 Task 5 and 6 exact content confirmed from plan file
+312 11:41a 🟣 photo-pipeline --tele flag: env.example TELEGRAM_* vars documented
+313 12:46p ✅ photo-pipeline README.md: --tele example block inserted before Agent invocation contract
+314 " 🔵 README.md HEAD lacks "Agent invocation contract" section — it's uncommitted pre-existing dirty content
+315 1:06p ⚖️ README.md Task 6: targeted patch approach to isolate --tele block from pre-existing dirty content
+316 1:07p 🔵 tele-only.patch has correct LF line endings — patch context references ## Output not ## Agent invocation contract
+318 " ⚖️ README.md Task 6: second patch attempt with corrected hunk header @@ -76,7 +76,23 @@
+319 " 🔵 README.md working tree uses em-dash (U+2014, 0xe2 0x80 0x94) in "never fails" line — patch has ASCII "--"
+317 " 🔵 HEAD README.md line 79: ## Output follows --wp-url block with single blank line — patch context matches exactly
+320 " ✅ README Updated with Telegram Notification Usage Example
+321 1:08p ✅ README Telegram Block Injected via Git Index Manipulation
+322 1:10p ✅ README Telegram Docs Committed to feat/telegram-notify Branch
+323 " 🟣 Agent Invocation Contract Section Added to README
+324 " 🔵 git add -p Cannot Split Adjacent Hunks — Used hash-object Workaround
+325 1:11p ✅ feat/telegram-notify Branch Task 6 Verified Complete — Task 10 Started
+326 " 🔵 feat/telegram-notify Branch Has 7 Commits — Full Implementation Visible
+327 " 🔵 feat/telegram-notify Branch Total Scope: 203 Lines Across 5 Files
+328 " 🔵 photo-pipeline Telegram Notify Spec and Implementation Plan Located
+329 1:12p 🔵 telegram_notify() Implementation Drops resp.status Check — Relies on urllib HTTPError
+330 1:18p 🟣 telegram_notify() Unit Tests All Pass — Feature Implementation Verified
+331 " 🔵 Code Review: feat/telegram-notify READY TO MERGE — No Blocking Issues
+S98 Complete Task 7: Add Telegram credentials to AWS secret and run live smoke test for feat/telegram-notify (May 16 at 1:20 PM)
+332 5:03p 🔵 AWS clownshow Profile Confirmed Active — AdministratorAccess via SSO
+S99 Add Telegram bot token to AWS secret for photo-pipeline --tele feature — blocked on invalid token (May 16 at 5:04 PM)
+333 5:04p 🔵 Telegram Bot Token Failed Validation — 401 Unauthorized
+S100 Complete Task 7 live smoke test: run photo-pipeline with --tele against cmbpix_prod and verify Telegram notification delivered (May 16 at 5:04 PM)
+334 5:05p 🔵 Valid Telegram Bot Token Confirmed — @archermvdbot
+335 " ✅ Telegram Credentials Written to wordpress-mcp/photo-pipeline AWS Secret
+336 5:06p 🔵 mothers-day-26 Album Selected as Smoke Test Target — 11 Images
+337 " 🔵 Bagels Album on NAS Selected as --tele Smoke Test Target — 7 Images
+338 " 🟣 --tele Live Smoke Test Passed — Bagels Gallery Published to cmbpix_prod with Telegram Notification
+339 " 🔵 Telegram Notification Sends Unusable Preview URL for Draft Modula Galleries
+S101 Fix post-smoke-test bug: switch Telegram notification from preview_url to edit_url, then re-smoke-test and merge to main (May 16 at 5:06 PM)
+S103 photo-pipeline feat/telegram-notify: complete branch — fix Telegram link to use wp-admin edit URL, smoke test, and ff-merge to main (May 16 at 5:10 PM)
+340 5:11p 🔴 telegram_notify() Signature Updated to edit_url — Call Site Still Needs Fix
+343 " 🔵 Task 12 Smoke Test: Telegram message delivered but edit URL link errors
+341 " 🔴 Call Site Fixed: edit_url=edit_link Now Passed to telegram_notify()
+342 " 🔵 Unit Tests Now Broken — All 4 Tests Still Pass preview_url Keyword
+345 5:13p 🔵 Telegram Edit URL Link Errored on First Smoke Test
+346 5:26p 🔴 Telegram Notify Switched from Preview URL to wp-admin Edit URL
+347 " 🟣 Smoke Test v2 Confirms Edit URL Delivered Correctly in Telegram
+348 " ⚖️ Selective README Staging via git hash-object to Isolate Unrelated Dirty Hunks
+344 5:27p 🟣 Telegram edit URL fix committed to feat/telegram-notify (commit a322a90)
+349 5:36p 🟣 feat/telegram-notify Fast-Forward Merged to main (Push Pending)
+S102 photo-pipeline feat/telegram-notify branch: fix Telegram notification to use wp-admin edit URL, commit, smoke test, and merge to main (May 16 at 5:36 PM)
+S104 photo-pipeline feat/telegram-notify: ship Telegram --tele notification feature — fix edit URL, smoke test, merge to main, push to GitHub, clean up branch (May 16 at 5:37 PM)
+350 5:38p 🔵 Pre-existing Dirty Files in photo-pipeline Repo: Substantial Uncommitted Work
+351 " ✅ Selective revert of claude-mem-context block in AGENTS.md
+352 5:39p ✅ photo-pipeline docs: agent invocation contract added to AGENTS.md, CLAUDE.md, README.md
+353 " 🔵 .omc/ directory not in photo-pipeline .gitignore
+
+Access 546k tokens of past work via get_observations([IDs]) or mem-search skill.
+</claude-mem-context>

@@ -129,6 +129,252 @@ def telegram_notify(
         print(f"WARN: Telegram notify failed: {e}", file=sys.stderr)
 
 
+def gemini_generate_json(prompt: str, api_key: str, max_output_tokens: int = 2048) -> dict:
+    """Send a text-only prompt to Gemini and parse the JSON response."""
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt},
+                ]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.3,
+            "maxOutputTokens": max_output_tokens,
+        },
+    }
+
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"gemini-2.0-flash:generateContent?key={api_key}"
+    )
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        result = json.loads(resp.read().decode("utf-8"))
+
+    text = result["candidates"][0]["content"]["parts"][0]["text"].strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```\w*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text)
+        text = text.strip()
+    return json.loads(text)
+
+
+def resolve_last30days_python() -> str | None:
+    """Return a Python 3.12+ interpreter for last30days, if available."""
+    candidates = [
+        "python3.13",
+        "python3.12",
+        "python3",
+        "python",
+    ]
+    for name in candidates:
+        path = shutil.which(name)
+        if not path:
+            continue
+        try:
+            result = subprocess.run(
+                [path, "-c", "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=True,
+            )
+        except (subprocess.SubprocessError, OSError):
+            continue
+        version = (result.stdout or "").strip()
+        if version in {"3.12", "3.13", "3.14"}:
+            return path
+    return None
+
+
+def resolve_last30days_command(explicit_script: str | None, env: dict[str, str]) -> list[str] | None:
+    """Resolve a usable last30days command, or None when unavailable."""
+    configured = (
+        explicit_script
+        or os.environ.get("LAST30DAYS_SCRIPT")
+        or env.get("LAST30DAYS_SCRIPT")
+    )
+    if configured:
+        path = Path(configured).expanduser()
+        if path.suffix == ".py":
+            py = resolve_last30days_python()
+            return [py, str(path)] if py else None
+        return [str(path)]
+
+    for binary_name in ("last30days", "last30"):
+        path_cmd = shutil.which(binary_name)
+        if path_cmd:
+            return [path_cmd]
+
+    candidates = [
+        Path.home() / ".openclaw" / "skills" / "last30days" / "scripts" / "last30days.py",
+        Path.home() / ".codex" / "skills" / "last30days" / "scripts" / "last30days.py",
+        Path.home() / ".claude" / "plugins" / "cache" / "last30days-skill" / "last30days",
+    ]
+    for candidate in candidates:
+        if candidate.is_dir():
+            nested = sorted(candidate.glob("*/skills/last30days/scripts/last30days.py"))
+            flat = sorted(candidate.glob("*/SKILL.md"))
+            if nested:
+                py = resolve_last30days_python()
+                return [py, str(nested[-1])] if py else None
+            if flat:
+                script = flat[-1].parent / "scripts" / "last30days.py"
+                if script.exists():
+                    py = resolve_last30days_python()
+                    return [py, str(script)] if py else None
+        if candidate.exists():
+            py = resolve_last30days_python()
+            return [py, str(candidate)] if py else None
+
+    return None
+
+
+def derive_research_topic(title: str, analysis_results: list[dict]) -> str:
+    """Build a research query from the gallery title and top Gemini tags."""
+    tag_counts: dict[str, int] = {}
+    for item in analysis_results:
+        for tag in item.get("metadata", {}).get("tags", []):
+            norm = str(tag).strip().lower()
+            if norm:
+                tag_counts[norm] = tag_counts.get(norm, 0) + 1
+
+    top_tags = [tag for tag, _count in sorted(tag_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:5]]
+    if top_tags:
+        return f"{title} photography trends {' '.join(top_tags)}"
+    return f"{title} photography trends"
+
+
+def run_social_research(
+    topic: str,
+    command: list[str] | None,
+    days: int,
+    sources: str,
+    mode: str,
+    timeout: int,
+) -> dict:
+    """Run last30days research and return a structured result."""
+    if not command:
+        return {
+            "enabled": False,
+            "topic": topic,
+            "status": "unavailable",
+            "reason": "last30days command not found",
+        }
+
+    cmd = list(command) + [topic, "--emit", "compact", f"--search={sources}", f"--days={days}"]
+    if mode == "quick":
+        cmd.append("--quick")
+    elif mode == "deep":
+        cmd.append("--deep")
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except FileNotFoundError:
+        return {
+            "enabled": True,
+            "topic": topic,
+            "status": "unavailable",
+            "reason": "last30days executable missing",
+            "command": cmd,
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "enabled": True,
+            "topic": topic,
+            "status": "timeout",
+            "reason": f"research exceeded {timeout}s timeout",
+            "command": cmd,
+        }
+
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+    return {
+        "enabled": True,
+        "topic": topic,
+        "status": "ok" if result.returncode == 0 else "failed",
+        "command": cmd,
+        "returncode": result.returncode,
+        "stdout": stdout,
+        "stderr": stderr,
+    }
+
+
+def build_editorial_prompt(
+    title: str,
+    analysis_results: list[dict],
+    research_result: dict | None,
+) -> str:
+    """Assemble the editorial-generation prompt from gallery metadata."""
+    images = []
+    for item in analysis_results[:12]:
+        meta = item.get("metadata", {})
+        images.append({
+            "filename": item.get("filename"),
+            "alt_text": meta.get("alt_text", ""),
+            "caption": meta.get("caption", ""),
+            "tags": meta.get("tags", []),
+            "description": meta.get("description", ""),
+        })
+
+    research_text = ""
+    if research_result and research_result.get("status") == "ok":
+        research_text = research_result.get("stdout", "")
+    elif research_result and research_result.get("reason"):
+        research_text = f"Research unavailable: {research_result['reason']}"
+
+    payload = {
+        "title": title,
+        "images": images,
+        "research_topic": research_result.get("topic") if research_result else "",
+        "research_output": research_text[:12000],
+    }
+    return (
+        "You are writing editorial copy for a photo gallery post.\n"
+        "Use the gallery title, image metadata, and recent social/community research to create copy that fits the gallery without inventing facts.\n"
+        "Return JSON with exactly these keys:\n"
+        '- "intro_html": 2 short HTML paragraphs using only <p>, with a strong opening and no markdown\n'
+        '- "outro_html": 1 short HTML paragraph using only <p>\n'
+        '- "social_caption": 1 punchy caption for a social post, max 280 characters\n'
+        '- "hashtags": array of 3-8 lowercase hashtags without # prefixes\n'
+        '- "angle": 1 sentence summarizing the post angle derived from the research\n'
+        "Keep the tone contemporary and specific to the photos.\n"
+        "If the research is thin or unavailable, rely on the image metadata and do not mention the missing research.\n"
+        "Input JSON:\n"
+        f"{json.dumps(payload, ensure_ascii=True)}"
+    )
+
+
+def generate_gallery_editorial(
+    title: str,
+    analysis_results: list[dict],
+    research_result: dict | None,
+    api_key: str,
+) -> dict:
+    """Generate editorial and social copy for the gallery."""
+    prompt = build_editorial_prompt(title, analysis_results, research_result)
+    return gemini_generate_json(prompt, api_key, max_output_tokens=1536)
+
+
+def build_post_content(intro_html: str, gallery_block: str, outro_html: str) -> str:
+    """Compose the final post body with optional intro/outro around the gallery."""
+    parts = [part.strip() for part in (intro_html, gallery_block, outro_html) if part and part.strip()]
+    return "\n\n".join(parts)
+
+
 def find_images(album_dir: Path) -> list[Path]:
     """Find all supported image files in the album directory."""
     images = []
@@ -712,11 +958,11 @@ def wp_create_draft_post(
     wp_url: str,
     wp_user: str,
     wp_password: str,
+    intro_html: str = "",
+    outro_html: str = "",
+    status: str = "draft",
 ) -> dict:
     """Create a draft blog post with a gallery block referencing uploaded media."""
-    image_ids = [str(m["id"]) for m in media_items]
-    ids_str = ",".join(image_ids)
-
     gallery_block = f'<!-- wp:gallery {{"linkTo":"none","columns":3}} -->\n'
     gallery_block += '<figure class="wp-block-gallery has-nested-images columns-3 is-cropped">\n'
     for m in media_items:
@@ -733,6 +979,7 @@ def wp_create_draft_post(
             gallery_block += f"<figcaption class=\"wp-element-caption\">{cap_text}</figcaption>"
         gallery_block += "</figure>\n<!-- /wp:image -->\n"
     gallery_block += "</figure>\n<!-- /wp:gallery -->"
+    content = build_post_content(intro_html, gallery_block, outro_html)
 
     auth_str = base64.b64encode(f"{wp_user}:{wp_password}".encode()).decode()
 
@@ -769,8 +1016,8 @@ def wp_create_draft_post(
 
     post_payload = {
         "title": title,
-        "content": gallery_block,
-        "status": "draft",
+        "content": content,
+        "status": status,
         "tags": tag_ids,
     }
     if media_items:
@@ -857,6 +1104,24 @@ def main() -> None:
              "telegram_bot_token, telegram_chat_id, and "
              "telegram_content_creative_thread_id in the AWS secret (or the "
              "corresponding TELEGRAM_* env vars). No-op with --dry-run.")
+    parser.add_argument("--social-research", action="store_true",
+        help="Run last30days social/community research for the gallery topic "
+             "and generate matching editorial copy for the WP post body.")
+    parser.add_argument("--social-topic", type=str, default=None,
+        help="Explicit last30days research topic. Default: derived from title "
+             "and Gemini tags.")
+    parser.add_argument("--social-sources", type=str, default="reddit",
+        help="Comma-separated last30days sources (default: reddit).")
+    parser.add_argument("--social-days", type=int, default=30,
+        help="Lookback window for last30days research (default: 30).")
+    parser.add_argument("--social-mode", type=str, default="quick",
+        choices=["quick", "deep"],
+        help="Research depth for last30days (default: quick).")
+    parser.add_argument("--social-timeout", type=int, default=240,
+        help="Timeout in seconds for the last30days research step (default: 240).")
+    parser.add_argument("--last30days-script", type=str, default=None,
+        help="Path to the last30days executable or script. Overrides "
+             "LAST30DAYS_SCRIPT and auto-detection.")
     args = parser.parse_args()
 
     # Defensive default: cmbpix_* targets always mean a Modula gallery. The
@@ -897,6 +1162,7 @@ def main() -> None:
     tg_thread  = pick(None, "TELEGRAM_CONTENT_CREATIVE_THREAD_ID",    "telegram_content_creative_thread_id",    None)
     max_width = args.max_width or int(env.get("MAX_WIDTH", "1920"))
     quality = args.quality or int(env.get("JPEG_QUALITY", "85"))
+    last30days_command = resolve_last30days_command(args.last30days_script, env)
 
     if not gemini_key or gemini_key == "your-gemini-api-key-here":
         print("ERROR: Set GEMINI_API_KEY in .env", file=sys.stderr)
@@ -1027,6 +1293,48 @@ def main() -> None:
     manifest_path = work_dir / "manifest.json"
     manifest_path.write_text(json.dumps(analysis_results, indent=2))
     print(f"Manifest written: {manifest_path}")
+
+    research_result = None
+    editorial = None
+    editorial_path = None
+    research_path = None
+    research_topic = args.social_topic or derive_research_topic(post_title, analysis_results)
+
+    if args.social_research:
+        print()
+        print(f"Research topic: {research_topic}")
+        research_result = run_social_research(
+            topic=research_topic,
+            command=last30days_command,
+            days=args.social_days,
+            sources=args.social_sources,
+            mode=args.social_mode,
+            timeout=args.social_timeout,
+        )
+        research_path = work_dir / "social_research.json"
+        research_path.write_text(json.dumps(research_result, indent=2))
+        print(f"Social research written: {research_path}")
+
+        if research_result["status"] == "ok":
+            print("Generating editorial copy from research + gallery metadata ...")
+        else:
+            reason = research_result.get("reason") or research_result.get("stderr") or "unknown error"
+            print(f"WARN: social research unavailable: {reason}", file=sys.stderr)
+            print("Generating editorial copy from gallery metadata only ...")
+
+        try:
+            editorial = generate_gallery_editorial(
+                title=post_title,
+                analysis_results=analysis_results,
+                research_result=research_result,
+                api_key=gemini_key,
+            )
+            editorial_path = work_dir / "post_draft.json"
+            editorial_path.write_text(json.dumps(editorial, indent=2))
+            print(f"Editorial draft written: {editorial_path}")
+        except Exception as e:
+            print(f"WARN: editorial generation failed: {e}", file=sys.stderr)
+            editorial = None
 
     if args.dry_run:
         print()
@@ -1160,6 +1468,12 @@ def main() -> None:
             "featured_media": media_items[0]["id"],
             "status": args.status,
         }
+        if editorial:
+            update_fields["content"] = build_post_content(
+                editorial.get("intro_html", ""),
+                "",
+                editorial.get("outro_html", ""),
+            )
         if args.featured:
             update_fields["meta"] = {"_cmbpix_featured": True}
         if term_id is not None:
@@ -1186,6 +1500,12 @@ def main() -> None:
             "featured_media": media_items[0]["id"],
             "status": args.status,
         }
+        if editorial:
+            update_fields["content"] = build_post_content(
+                editorial.get("intro_html", ""),
+                "",
+                editorial.get("outro_html", ""),
+            )
         if args.featured:
             update_fields["meta"] = {"_cmbpix_featured": True}
         if term_id is not None:
@@ -1212,6 +1532,9 @@ def main() -> None:
                 wp_url=wp_url,
                 wp_user=wp_user,
                 wp_password=wp_password,
+                intro_html=(editorial or {}).get("intro_html", ""),
+                outro_html=(editorial or {}).get("outro_html", ""),
+                status=args.status,
             )
             post_id = post["id"]
             edit_link = f"{wp_url}/wp-admin/post.php?post={post_id}&action=edit"
@@ -1232,6 +1555,13 @@ def main() -> None:
         "images_uploaded": len(media_items),
         "images_analyzed": len(analysis_results),
         "working_directory": str(work_dir),
+        "social_research_enabled": bool(args.social_research),
+        "social_research_topic": research_topic if args.social_research else None,
+        "social_research_status": research_result.get("status") if research_result else None,
+        "social_research_path": str(research_path) if research_path else None,
+        "editorial_draft_path": str(editorial_path) if editorial_path else None,
+        "social_caption": (editorial or {}).get("social_caption"),
+        "hashtags": (editorial or {}).get("hashtags"),
     }
     summary_path = work_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, indent=2))

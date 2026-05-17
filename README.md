@@ -4,7 +4,9 @@ Analyze, rename, and publish photo albums as WordPress draft posts.
 
 Uses Google Gemini vision to inspect each image, generate SEO-friendly
 filenames, alt text, captions, and tags, then uploads to WordPress via
-REST API and creates a gallery draft post.
+REST API and creates a gallery draft post. Optionally, it can also run
+`last30days` social/community research and generate matching editorial copy
+for the final post body.
 
 ## How it works
 
@@ -94,6 +96,23 @@ wp-admin edit URL (draft preview URLs return 404 to anonymous viewers,
 so the edit link is more useful in practice). No-op with `--dry-run`;
 failure to notify only warns — it never fails the pipeline.
 
+With social research + editorial generation:
+
+```bash
+python3 photo-pipeline.py /path/to/album \
+  --title "Bagels" \
+  --social-research \
+  --last30days-script ~/.openclaw/skills/last30days/scripts/last30days.py
+```
+
+This runs `last30days` research for a topic derived from the gallery title
+plus Gemini tags, writes `social_research.json` and `post_draft.json` in the
+working directory, and uses the generated intro/outro copy as the WordPress
+post body. Override the query with `--social-topic`, the source set with
+`--social-sources`, or the lookback window with `--social-days`. The upstream
+v3 skill requires Python 3.12+ for its own runtime even though this pipeline
+itself still runs on Python 3.10+.
+
 ## Agent invocation contract
 
 `photo-pipeline.py` is the canonical implementation. Agents, skills, and
@@ -151,6 +170,7 @@ Agent behavior:
 - Renamed images in a temp working directory
 - `manifest.json` with per-image metadata from Gemini
 - `summary.json` with post URL and stats
+- `social_research.json` and `post_draft.json` when `--social-research` is enabled
 - A WordPress draft post with a gallery block and tags
 
 ## cmbpix.com workflow (primary)
