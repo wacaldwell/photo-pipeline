@@ -467,47 +467,15 @@ RATING_ELEMENTS = [
 ]
 RATING_KEYS = [key for key, _label, _defn in RATING_ELEMENTS]
 
-# Per-element scores are real "Photo Critique" outputs (operator-provided), used as
-# text few-shot anchors to pin Gemini's scale and narrative voice. The shown `overall`
-# is the in-code mean of the twelve (what the pipeline thresholds on); Photo Critique
-# itself reports an overall ~0.1 higher than this mean.
-RATING_FEW_SHOT = [
-    {
-        "desc": "Wakeboarder mid-action behind a boat: wake, spray, diagonal tow rope, wide lake, big sky, shot in strong midday sun (shadowed face).",
-        "scores": {"impact": 8, "technical_excellence": 7, "creativity": 7, "composition": 7,
-                   "presentation": 7, "color_harmony": 8, "interest_areas": 7, "light": 6,
-                   "technique": 8, "the_story": 8, "style": 7, "subject_matter": 8},
-        "overall": 7.3,
-    },
-    {
-        "desc": "Golden Gate Bridge through soft out-of-focus foreground foliage; longer-lens compression stacking bridge, hills, water, sky; tower slightly cropped at top.",
-        "scores": {"impact": 8, "technical_excellence": 7, "creativity": 8, "composition": 7,
-                   "presentation": 7, "color_harmony": 8, "interest_areas": 7, "light": 7,
-                   "technique": 8, "the_story": 8, "style": 8, "subject_matter": 9},
-        "overall": 7.7,
-    },
-    {
-        "desc": "Child playing in a backyard water spray with a colorful pinwheel; suspended droplets, warm golden light, shallow depth of field, genuine expression.",
-        "scores": {"impact": 8, "technical_excellence": 8, "creativity": 8, "composition": 7,
-                   "presentation": 8, "color_harmony": 8, "interest_areas": 8, "light": 7,
-                   "technique": 8, "the_story": 9, "style": 8, "subject_matter": 9},
-        "overall": 8.0,
-    },
-    {
-        "desc": "Tight winter portrait of a child with sharp expressive eyes, blue coat, olive hat, snow crystals, soft high-key snowy background; crop tight above the hat.",
-        "scores": {"impact": 9, "technical_excellence": 8, "creativity": 8, "composition": 7,
-                   "presentation": 8, "color_harmony": 9, "interest_areas": 8, "light": 8,
-                   "technique": 8, "the_story": 8, "style": 8, "subject_matter": 9},
-        "overall": 8.2,
-    },
-]
 
-
-def build_rating_prompt(few_shot: list[dict]) -> str:
-    """Build the Gemini rating prompt: PPA rubric + JSON schema + text few-shot anchors."""
+def build_rating_prompt() -> str:
+    """Build the Gemini rating prompt: strict PPA 12-element rubric with 2-10 bands."""
     lines = [
-        "You are an expert photography judge using the PPA \"12 Elements of a Merit "
-        "Image\". Score the photograph on each element from 1 to 10 (integers).",
+        "You are an expert photography judge culling a batch of photos using the PPA "
+        "\"12 Elements of a Merit Image\". Score the photograph on each element from "
+        "2 to 10 (integers). Be strict and practical: most ordinary snapshots land at "
+        "6-7; reserve 8+ for genuinely strong images and 9-10 for portfolio-level work. "
+        "Do not inflate scores.",
         "",
         "Elements:",
     ]
@@ -515,30 +483,27 @@ def build_rating_prompt(few_shot: list[dict]) -> str:
         lines.append(f"- {label}: {defn}")
     lines += [
         "",
+        "The overall score is the mean of the twelve. Calibrate your element scores so "
+        "the overall lands in the right band:",
+        "- 9-10: portfolio-level",
+        "- 8-8.9: strong keeper",
+        "- 7-7.9: keep if meaningful or editable",
+        "- 6-6.9: maybe",
+        "- below 6: cull unless it has personal value",
+        "",
         "Return ONLY a JSON object (no markdown fences, no extra text) with exactly:",
-        '{"scores": {' + ", ".join(f'"{k}": <1-10>' for k in RATING_KEYS) + "},",
+        '{"scores": {' + ", ".join(f'"{k}": <2-10>' for k in RATING_KEYS) + "},",
         '  "narrative": {"impression": "...", "strongest": "...", "refine": "...",'
         ' "improvement": "...", "titles": ["...", "..."]}}',
         "",
-        "Calibration examples (subject -> scores -> overall = mean of the twelve):",
-    ]
-    for ex in few_shot:
-        score_str = ", ".join(f"{k}:{ex['scores'][k]}" for k in RATING_KEYS)
-        lines.append(f"- {ex['desc']}")
-        lines.append(f"    scores: {score_str}  (overall {ex['overall']})")
-    lines += [
-        "",
-        "Judge the provided image on the same scale and in the same voice.",
+        "Be strict. Judge the provided image now.",
     ]
     return "\n".join(lines)
 
 
-def gemini_rate_image(image_path: Path, api_key: str,
-                      few_shot: list[dict] | None = None) -> dict:
+def gemini_rate_image(image_path: Path, api_key: str) -> dict:
     """Rate one photo against the PPA 12 Elements. Returns {"scores": {...}, "narrative": {...}}."""
-    if few_shot is None:
-        few_shot = RATING_FEW_SHOT
-    prompt = build_rating_prompt(few_shot)
+    prompt = build_rating_prompt()
     payload = {
         "contents": [
             {"parts": [{"text": prompt}, _image_inline_part(image_path)]}
@@ -563,29 +528,43 @@ def compute_overall(scores: dict) -> float:
 
 
 def make_rating_entry(original: Path, rating: dict | None,
-                      min_rating: float | None) -> dict:
-    """Build a ratings.json entry with a kept/culled/unrated decision.
+                      cull_below: float, keep_above: float) -> dict:
+    """Build a ratings.json entry with a keep/maybe/cull/unrated decision.
 
-    Fail-open: a None rating (API failure) is 'unrated' and kept for manual review.
-    No cutoff (rate-only mode) keeps everything.
+    Bands on the overall (mean of the 12): < cull_below -> 'cull';
+    >= keep_above -> 'keep'; in between -> 'maybe'. Only 'cull' is excluded from
+    upload; 'keep'/'maybe'/'unrated' proceed. Fail-open: a None rating (API failure)
+    is 'unrated' and kept for manual review.
     """
     if rating is None:
         return {"original": str(original), "scores": None, "overall": None,
                 "decision": "unrated", "narrative": None}
     overall = compute_overall(rating["scores"])
-    if min_rating is None:
-        decision = "kept"
+    if overall < cull_below:
+        decision = "cull"
+    elif overall >= keep_above:
+        decision = "keep"
     else:
-        decision = "kept" if overall >= min_rating else "culled"
+        decision = "maybe"
     return {"original": str(original), "scores": rating["scores"],
             "overall": overall, "decision": decision,
             "narrative": rating.get("narrative")}
 
 
-def resolve_rating_flags(rate: bool, min_rating: float | None) -> tuple[bool, float | None]:
-    """--min-rating implies --rate. Returns (rating_enabled, cutoff)."""
-    enabled = bool(rate or min_rating is not None)
-    return enabled, min_rating
+def resolve_rating_flags(rate: bool, cull_below: float | None,
+                         keep_above: float | None) -> tuple[bool, float, float]:
+    """Either band flag implies --rate. Returns (enabled, cull_floor, keep_floor).
+
+    Defaults match the Photo Critique rubric: cull below 6.0, keep at/above 8.0.
+    A keep_floor below cull_floor is degenerate, so it is clamped up to cull_floor
+    (empty 'maybe' band -> effectively two-way).
+    """
+    enabled = bool(rate or cull_below is not None or keep_above is not None)
+    cull_floor = cull_below if cull_below is not None else 6.0
+    keep_floor = keep_above if keep_above is not None else 8.0
+    if keep_floor < cull_floor:
+        keep_floor = cull_floor
+    return enabled, cull_floor, keep_floor
 
 
 def gemini_analyze_image(image_path: Path, api_key: str) -> dict:
@@ -1237,11 +1216,15 @@ def main() -> None:
              "telegram_content_creative_thread_id in the AWS secret (or the "
              "corresponding TELEGRAM_* env vars). No-op with --dry-run.")
     parser.add_argument("--rate", action="store_true",
-        help="Rate each image 1-10 against the PPA 12 Elements before SEO analysis; "
-             "writes ratings.json. Culls nothing on its own.")
-    parser.add_argument("--min-rating", type=float, default=None,
-        help="Cull cutoff on the overall (mean) rating; implies --rate. "
-             "Images scoring below this are excluded from upload (source files untouched).")
+        help="Rate each image 2-10 against the PPA 12 Elements before SEO analysis; "
+             "writes ratings.json with a keep/maybe/cull decision per photo.")
+    parser.add_argument("--cull-below", type=float, default=None,
+        help="Cull photos with an overall (mean) rating below this (default 6.0); "
+             "implies --rate. Culled photos are excluded from upload (source untouched).")
+    parser.add_argument("--keep-above", type=float, default=None,
+        help="Auto-keep photos with an overall rating at/above this (default 8.0); "
+             "implies --rate. Photos between --cull-below and --keep-above are 'maybe' "
+             "(kept, but flagged for your review pass).")
     parser.add_argument("--rate-delay", type=float, default=None,
         help="Seconds between rating API calls (default: same as --delay).")
     parser.add_argument("--social-research", action="store_true",
@@ -1382,14 +1365,15 @@ def main() -> None:
     # source files are never moved or deleted. Fail-open: a failed rating call
     # keeps the photo (marked 'unrated') for manual review.
     # -----------------------------------------------------------------------
-    rate_enabled, rate_cutoff = resolve_rating_flags(args.rate, args.min_rating)
+    rate_enabled, cull_floor, keep_floor = resolve_rating_flags(
+        args.rate, args.cull_below, args.keep_above)
     ratings: list[dict] = []
     rating_map: dict[Path, dict] = {}
-    n_kept = n_culled = n_unrated = 0
+    n_keep = n_maybe = n_cull = n_unrated = 0
     if rate_enabled:
         rate_delay = args.rate_delay if args.rate_delay is not None else args.delay
-        cutoff_str = "none" if rate_cutoff is None else f"{rate_cutoff:.1f}"
-        print(f"Rating {len(images)} image(s) against PPA 12 Elements (cutoff {cutoff_str}) ...")
+        print(f"Rating {len(images)} image(s) against PPA 12 Elements "
+              f"(cull <{cull_floor:.1f}, keep >={keep_floor:.1f}) ...")
         for i, img in enumerate(images, 1):
             if i > 1 and rate_delay > 0:
                 time.sleep(rate_delay)
@@ -1399,7 +1383,7 @@ def main() -> None:
             except Exception as e:
                 print(f"  RATING FAILED (kept for manual review): {e}", file=sys.stderr)
                 rating = None
-            entry = make_rating_entry(img, rating, rate_cutoff)
+            entry = make_rating_entry(img, rating, cull_floor, keep_floor)
             rating_map[img] = entry
             ratings.append(entry)
             ov = "n/a" if entry["overall"] is None else f"{entry['overall']:.1f}"
@@ -1414,17 +1398,18 @@ def main() -> None:
         for e in sorted(ratings, key=lambda e: (e["overall"] is not None, e["overall"] or 0), reverse=True):
             ov = "n/a" if e["overall"] is None else f"{e['overall']:.1f}"
             print(f"  {ov:>4}  {e['decision']:<7}  {Path(e['original']).name}")
-        n_kept = sum(1 for e in ratings if e["decision"] == "kept")
-        n_culled = sum(1 for e in ratings if e["decision"] == "culled")
+        n_keep = sum(1 for e in ratings if e["decision"] == "keep")
+        n_maybe = sum(1 for e in ratings if e["decision"] == "maybe")
+        n_cull = sum(1 for e in ratings if e["decision"] == "cull")
         n_unrated = sum(1 for e in ratings if e["decision"] == "unrated")
-        suffix = f" (cutoff {rate_cutoff})" if rate_cutoff is not None else ""
-        print(f"Rating: {n_kept} kept, {n_culled} culled, {n_unrated} unrated{suffix}")
+        print(f"Rating: {n_keep} keep, {n_maybe} maybe, {n_cull} cull, "
+              f"{n_unrated} unrated (cull <{cull_floor:.1f}, keep >={keep_floor:.1f})")
         print()
 
-        # Filter-only cull: drop 'culled'; keep 'kept' and (fail-open) 'unrated'.
-        images = [img for img in images if rating_map[img]["decision"] != "culled"]
+        # Filter-only cull: drop 'cull'; keep 'keep'/'maybe' and (fail-open) 'unrated'.
+        images = [img for img in images if rating_map[img]["decision"] != "cull"]
         if not images:
-            print("ERROR: all images culled by rating. Lower --min-rating or review the album.", file=sys.stderr)
+            print("ERROR: all images culled by rating. Lower --cull-below or review the album.", file=sys.stderr)
             sys.exit(1)
 
     analysis_results = []
@@ -1749,9 +1734,11 @@ def main() -> None:
         "images_analyzed": len(analysis_results),
         "rating": {
             "enabled": rate_enabled,
-            "cutoff": rate_cutoff,
-            "kept": n_kept,
-            "culled": n_culled,
+            "cull_below": cull_floor if rate_enabled else None,
+            "keep_above": keep_floor if rate_enabled else None,
+            "keep": n_keep,
+            "maybe": n_maybe,
+            "cull": n_cull,
             "unrated": n_unrated,
             "scores": [
                 {"file": Path(e["original"]).name, "overall": e["overall"], "decision": e["decision"]}

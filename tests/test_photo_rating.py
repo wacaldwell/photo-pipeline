@@ -53,12 +53,19 @@ class RatingPromptTests(unittest.TestCase):
                   "technique", "the_story", "style", "subject_matter"]:
             self.assertIn(k, photo_pipeline.RATING_KEYS)
 
-    def test_prompt_mentions_elements_and_json_and_examples(self):
-        prompt = photo_pipeline.build_rating_prompt(photo_pipeline.RATING_FEW_SHOT)
+    def test_prompt_is_strict_with_bands_and_no_few_shot(self):
+        prompt = photo_pipeline.build_rating_prompt()  # no args now
         self.assertIn("Impact", prompt)
-        self.assertIn("subject_matter", prompt)   # schema key present
+        self.assertIn("subject_matter", prompt)        # schema key present
         self.assertIn("JSON", prompt)
-        self.assertIn("Golden Gate", prompt)       # a few-shot anchor leaked into prompt
+        self.assertIn("strict", prompt.lower())        # strictness directive
+        self.assertIn("portfolio", prompt.lower())     # band semantics present
+        self.assertIn("cull", prompt.lower())          # band semantics present
+        self.assertIn("2 to 10", prompt)               # 2-10 scale
+        self.assertNotIn("Golden Gate", prompt)        # few-shot anchors removed
+
+    def test_few_shot_constant_removed(self):
+        self.assertFalse(hasattr(photo_pipeline, "RATING_FEW_SHOT"))
 
 
 class GeminiRateImageTests(unittest.TestCase):
@@ -143,44 +150,64 @@ class ScoringTests(unittest.TestCase):
 
 
 class RatingEntryTests(unittest.TestCase):
-    def test_kept_at_or_above_cutoff(self):
+    # bands used in these tests: cull_below=6.0, keep_above=8.0
+    def test_keep_at_or_above_keep_floor(self):
         rating = {"scores": _scores_summing_to(8), "narrative": {}}
-        entry = photo_pipeline.make_rating_entry(Path("/a/img.jpg"), rating, 7.0)
-        self.assertEqual(entry["decision"], "kept")
+        entry = photo_pipeline.make_rating_entry(Path("/a/img.jpg"), rating, 6.0, 8.0)
+        self.assertEqual(entry["decision"], "keep")
         self.assertEqual(entry["overall"], 8.0)
         self.assertEqual(entry["original"], "/a/img.jpg")
 
-    def test_culled_below_cutoff(self):
-        rating = {"scores": _scores_summing_to(6), "narrative": {}}
-        entry = photo_pipeline.make_rating_entry(Path("/a/img.jpg"), rating, 7.0)
-        self.assertEqual(entry["decision"], "culled")
+    def test_maybe_between_floors(self):
+        rating = {"scores": _scores_summing_to(7), "narrative": {}}  # overall 7.0
+        entry = photo_pipeline.make_rating_entry(Path("/a/img.jpg"), rating, 6.0, 8.0)
+        self.assertEqual(entry["decision"], "maybe")
 
-    def test_rate_only_no_cutoff_keeps(self):
-        rating = {"scores": _scores_summing_to(3), "narrative": {}}
-        entry = photo_pipeline.make_rating_entry(Path("/a/img.jpg"), rating, None)
-        self.assertEqual(entry["decision"], "kept")
+    def test_maybe_at_cull_floor_boundary(self):
+        rating = {"scores": _scores_summing_to(6), "narrative": {}}  # overall 6.0, == cull_below
+        entry = photo_pipeline.make_rating_entry(Path("/a/img.jpg"), rating, 6.0, 8.0)
+        self.assertEqual(entry["decision"], "maybe")  # >= cull_below is not culled
 
-    def test_none_rating_is_unrated_and_kept_for_review(self):
-        entry = photo_pipeline.make_rating_entry(Path("/a/img.jpg"), None, 7.0)
+    def test_cull_below_cull_floor(self):
+        rating = {"scores": _scores_summing_to(5), "narrative": {}}  # overall 5.0
+        entry = photo_pipeline.make_rating_entry(Path("/a/img.jpg"), rating, 6.0, 8.0)
+        self.assertEqual(entry["decision"], "cull")
+
+    def test_none_rating_is_unrated(self):
+        entry = photo_pipeline.make_rating_entry(Path("/a/img.jpg"), None, 6.0, 8.0)
         self.assertEqual(entry["decision"], "unrated")
         self.assertIsNone(entry["overall"])
 
 
 class RatingFlagTests(unittest.TestCase):
-    def test_min_rating_implies_rate(self):
-        enabled, cutoff = photo_pipeline.resolve_rating_flags(False, 7.0)
+    def test_rate_enables_with_default_bands(self):
+        enabled, cull, keep = photo_pipeline.resolve_rating_flags(True, None, None)
         self.assertTrue(enabled)
-        self.assertEqual(cutoff, 7.0)
+        self.assertEqual(cull, 6.0)
+        self.assertEqual(keep, 8.0)
 
-    def test_rate_only(self):
-        enabled, cutoff = photo_pipeline.resolve_rating_flags(True, None)
-        self.assertTrue(enabled)
-        self.assertIsNone(cutoff)
-
-    def test_off_by_default(self):
-        enabled, cutoff = photo_pipeline.resolve_rating_flags(False, None)
+    def test_off_by_default_but_bands_still_returned(self):
+        enabled, cull, keep = photo_pipeline.resolve_rating_flags(False, None, None)
         self.assertFalse(enabled)
-        self.assertIsNone(cutoff)
+        self.assertEqual(cull, 6.0)
+        self.assertEqual(keep, 8.0)
+
+    def test_cull_below_implies_rate(self):
+        enabled, cull, keep = photo_pipeline.resolve_rating_flags(False, 5.0, None)
+        self.assertTrue(enabled)
+        self.assertEqual(cull, 5.0)
+        self.assertEqual(keep, 8.0)
+
+    def test_keep_above_implies_rate(self):
+        enabled, cull, keep = photo_pipeline.resolve_rating_flags(False, None, 9.0)
+        self.assertTrue(enabled)
+        self.assertEqual(cull, 6.0)
+        self.assertEqual(keep, 9.0)
+
+    def test_keep_floor_clamped_up_to_cull_floor(self):
+        enabled, cull, keep = photo_pipeline.resolve_rating_flags(True, 8.0, 6.0)
+        self.assertEqual(cull, 8.0)
+        self.assertEqual(keep, 8.0)  # degenerate keep<cull clamped
 
 
 if __name__ == "__main__":
