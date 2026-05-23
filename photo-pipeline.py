@@ -384,11 +384,10 @@ def find_images(album_dir: Path) -> list[Path]:
     return images
 
 
-def gemini_analyze_image(image_path: Path, api_key: str) -> dict:
-    """Send an image to Gemini Pro Vision and get SEO metadata back."""
+def _image_inline_part(image_path: Path) -> dict:
+    """Build a Gemini inline_data part (base64 image + mime type) for a file."""
     image_bytes = image_path.read_bytes()
     b64_image = base64.b64encode(image_bytes).decode("utf-8")
-
     mime_map = {
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
@@ -398,7 +397,60 @@ def gemini_analyze_image(image_path: Path, api_key: str) -> dict:
         ".tiff": "image/tiff",
     }
     mime_type = mime_map.get(image_path.suffix.lower(), "image/jpeg")
+    return {"inline_data": {"mime_type": mime_type, "data": b64_image}}
 
+
+def _gemini_vision_request(payload: dict, api_key: str,
+                           model: str = "gemini-2.0-flash",
+                           timeout: int = 60) -> dict:
+    """POST a generateContent payload with 429 backoff. Return the parsed response JSON."""
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{model}:generateContent?key={api_key}"
+    )
+    data = json.dumps(payload).encode("utf-8")
+    max_retries = 7
+    for attempt in range(max_retries):
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="replace")
+            if e.code == 429 and attempt < max_retries - 1:
+                # Prefer server's Retry-After; otherwise exponential backoff capped
+                # at 60s. Jitter avoids herd-retry on concurrent runs.
+                retry_after = e.headers.get("Retry-After") if e.headers else None
+                if retry_after and retry_after.strip().isdigit():
+                    wait = min(60.0, float(retry_after.strip()))
+                else:
+                    wait = min(60.0, 2 ** (attempt + 1) + 1)
+                wait += random.uniform(0, 1.5)
+                print(f"  Rate limited (429), waiting {wait:.1f}s (attempt {attempt + 1}/{max_retries}) ...", file=sys.stderr)
+                time.sleep(wait)
+                continue
+            print(f"  ERROR: Gemini API returned {e.code}: {body[:300]}", file=sys.stderr)
+            raise
+    raise RuntimeError("Gemini request exhausted retries")
+
+
+def _gemini_response_json(result: dict) -> dict:
+    """Extract the model's text from a Gemini response and parse it as JSON, tolerating ``` fences."""
+    text = result["candidates"][0]["content"]["parts"][0]["text"].strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```\w*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text)
+        text = text.strip()
+    return json.loads(text)
+
+
+def gemini_analyze_image(image_path: Path, api_key: str) -> dict:
+    """Send an image to Gemini and get SEO metadata back."""
     prompt = (
         "Analyze this photograph and return a JSON object with exactly these keys:\n"
         '- "seo_filename": a lowercase, hyphenated, SEO-friendly filename '
@@ -411,76 +463,17 @@ def gemini_analyze_image(image_path: Path, api_key: str) -> dict:
         "\n"
         "Return ONLY valid JSON, no markdown fences, no extra text."
     )
-
     payload = {
         "contents": [
-            {
-                "parts": [
-                    {"text": prompt},
-                    {
-                        "inline_data": {
-                            "mime_type": mime_type,
-                            "data": b64_image,
-                        }
-                    },
-                ]
-            }
+            {"parts": [{"text": prompt}, _image_inline_part(image_path)]}
         ],
         "generationConfig": {
             "temperature": 0.2,
             "maxOutputTokens": 512,
         },
     }
-
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.0-flash:generateContent?key={api_key}"
-    )
-
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-
-    max_retries = 7
-    for attempt in range(max_retries):
-        try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                result = json.loads(resp.read().decode("utf-8"))
-            break
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")
-            if e.code == 429 and attempt < max_retries - 1:
-                # Prefer server's Retry-After; otherwise exponential backoff capped at 60s.
-                # Jitter avoids herd-retry on concurrent runs.
-                retry_after = e.headers.get("Retry-After") if e.headers else None
-                if retry_after and retry_after.strip().isdigit():
-                    wait = min(60.0, float(retry_after.strip()))
-                else:
-                    wait = min(60.0, 2 ** (attempt + 1) + 1)
-                wait += random.uniform(0, 1.5)
-                print(f"  Rate limited (429), waiting {wait:.1f}s (attempt {attempt + 1}/{max_retries}) ...", file=sys.stderr)
-                time.sleep(wait)
-                req = urllib.request.Request(
-                    url,
-                    data=json.dumps(payload).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                continue
-            print(f"  ERROR: Gemini API returned {e.code}: {body[:300]}", file=sys.stderr)
-            raise
-
-    text = result["candidates"][0]["content"]["parts"][0]["text"]
-    text = text.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```\w*\n?", "", text)
-        text = re.sub(r"\n?```$", "", text)
-        text = text.strip()
-
-    return json.loads(text)
+    result = _gemini_vision_request(payload, api_key)
+    return _gemini_response_json(result)
 
 
 def sips_resize(src: Path, dst: Path, max_width: int, quality: int) -> None:
