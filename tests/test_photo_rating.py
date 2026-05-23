@@ -126,5 +126,62 @@ class GeminiRateImageTests(unittest.TestCase):
             photo_pipeline._image_inline_part = orig_part
 
 
+def _scores_summing_to(per):  # helper: all 12 elements = per
+    return {k: per for k in photo_pipeline.RATING_KEYS}
+
+
+class ScoringTests(unittest.TestCase):
+    def test_compute_overall_is_rounded_mean(self):
+        # wakeboard example: sum 88 over 12 = 7.333 -> 7.3
+        wake = {"impact": 8, "technical_excellence": 7, "creativity": 7, "composition": 7,
+                "presentation": 7, "color_harmony": 8, "interest_areas": 7, "light": 6,
+                "technique": 8, "the_story": 8, "style": 7, "subject_matter": 8}
+        self.assertEqual(photo_pipeline.compute_overall(wake), 7.3)
+
+    def test_compute_overall_uniform(self):
+        self.assertEqual(photo_pipeline.compute_overall(_scores_summing_to(8)), 8.0)
+
+
+class RatingEntryTests(unittest.TestCase):
+    def test_kept_at_or_above_cutoff(self):
+        rating = {"scores": _scores_summing_to(8), "narrative": {}}
+        entry = photo_pipeline.make_rating_entry(Path("/a/img.jpg"), rating, 7.0)
+        self.assertEqual(entry["decision"], "kept")
+        self.assertEqual(entry["overall"], 8.0)
+        self.assertEqual(entry["original"], "/a/img.jpg")
+
+    def test_culled_below_cutoff(self):
+        rating = {"scores": _scores_summing_to(6), "narrative": {}}
+        entry = photo_pipeline.make_rating_entry(Path("/a/img.jpg"), rating, 7.0)
+        self.assertEqual(entry["decision"], "culled")
+
+    def test_rate_only_no_cutoff_keeps(self):
+        rating = {"scores": _scores_summing_to(3), "narrative": {}}
+        entry = photo_pipeline.make_rating_entry(Path("/a/img.jpg"), rating, None)
+        self.assertEqual(entry["decision"], "kept")
+
+    def test_none_rating_is_unrated_and_kept_for_review(self):
+        entry = photo_pipeline.make_rating_entry(Path("/a/img.jpg"), None, 7.0)
+        self.assertEqual(entry["decision"], "unrated")
+        self.assertIsNone(entry["overall"])
+
+
+class RatingFlagTests(unittest.TestCase):
+    def test_min_rating_implies_rate(self):
+        enabled, cutoff = photo_pipeline.resolve_rating_flags(False, 7.0)
+        self.assertTrue(enabled)
+        self.assertEqual(cutoff, 7.0)
+
+    def test_rate_only(self):
+        enabled, cutoff = photo_pipeline.resolve_rating_flags(True, None)
+        self.assertTrue(enabled)
+        self.assertIsNone(cutoff)
+
+    def test_off_by_default(self):
+        enabled, cutoff = photo_pipeline.resolve_rating_flags(False, None)
+        self.assertFalse(enabled)
+        self.assertIsNone(cutoff)
+
+
 if __name__ == "__main__":
     unittest.main()

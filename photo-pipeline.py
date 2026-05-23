@@ -554,6 +554,38 @@ def gemini_rate_image(image_path: Path, api_key: str,
     return {"scores": scores, "narrative": narrative}
 
 
+def compute_overall(scores: dict) -> float:
+    """Overall rating = mean of the 12 element scores, rounded to 1 decimal."""
+    vals = [scores[k] for k in RATING_KEYS]
+    return round(sum(vals) / len(vals), 1)
+
+
+def make_rating_entry(original: Path, rating: dict | None,
+                      min_rating: float | None) -> dict:
+    """Build a ratings.json entry with a kept/culled/unrated decision.
+
+    Fail-open: a None rating (API failure) is 'unrated' and kept for manual review.
+    No cutoff (rate-only mode) keeps everything.
+    """
+    if rating is None:
+        return {"original": str(original), "scores": None, "overall": None,
+                "decision": "unrated", "narrative": None}
+    overall = compute_overall(rating["scores"])
+    if min_rating is None:
+        decision = "kept"
+    else:
+        decision = "kept" if overall >= min_rating else "culled"
+    return {"original": str(original), "scores": rating["scores"],
+            "overall": overall, "decision": decision,
+            "narrative": rating.get("narrative")}
+
+
+def resolve_rating_flags(rate: bool, min_rating: float | None) -> tuple[bool, float | None]:
+    """--min-rating implies --rate. Returns (rating_enabled, cutoff)."""
+    enabled = bool(rate or min_rating is not None)
+    return enabled, min_rating
+
+
 def gemini_analyze_image(image_path: Path, api_key: str) -> dict:
     """Send an image to Gemini and get SEO metadata back."""
     prompt = (
