@@ -1373,6 +1373,57 @@ def main() -> None:
     print(f"Working directory: {work_dir}")
     print()
 
+    # -----------------------------------------------------------------------
+    # Rating gate — mirrors the validation pass. Rate every (technically valid)
+    # image against the PPA 12 Elements, then drop sub-threshold photos from
+    # the processing set BEFORE the expensive SEO-analysis loop. Filter-only:
+    # source files are never moved or deleted. Fail-open: a failed rating call
+    # keeps the photo (marked 'unrated') for manual review.
+    # -----------------------------------------------------------------------
+    rate_enabled, rate_cutoff = resolve_rating_flags(args.rate, args.min_rating)
+    ratings: list[dict] = []
+    rating_map: dict[Path, dict] = {}
+    if rate_enabled:
+        rate_delay = args.rate_delay if args.rate_delay is not None else args.delay
+        cutoff_str = "none" if rate_cutoff is None else f"{rate_cutoff}"
+        print(f"Rating {len(images)} image(s) against PPA 12 Elements (cutoff {cutoff_str}) ...")
+        for i, img in enumerate(images, 1):
+            if i > 1 and rate_delay > 0:
+                time.sleep(rate_delay)
+            print(f"[rate {i}/{len(images)}] {img.name} ...")
+            try:
+                rating = gemini_rate_image(img, gemini_key)
+            except Exception as e:
+                print(f"  RATING FAILED (kept for manual review): {e}", file=sys.stderr)
+                rating = None
+            entry = make_rating_entry(img, rating, rate_cutoff)
+            rating_map[img] = entry
+            ratings.append(entry)
+            ov = "n/a" if entry["overall"] is None else f"{entry['overall']:.1f}"
+            print(f"  overall={ov}  {entry['decision']}")
+
+        ratings_path = work_dir / "ratings.json"
+        ratings_path.write_text(json.dumps(ratings, indent=2))
+        print(f"Ratings written: {ratings_path}")
+
+        print()
+        print("Rating results (high to low):")
+        for e in sorted(ratings, key=lambda e: (e["overall"] is not None, e["overall"] or 0), reverse=True):
+            ov = "n/a" if e["overall"] is None else f"{e['overall']:.1f}"
+            print(f"  {ov:>4}  {e['decision']:<7}  {Path(e['original']).name}")
+        n_kept = sum(1 for e in ratings if e["decision"] == "kept")
+        n_culled = sum(1 for e in ratings if e["decision"] == "culled")
+        n_unrated = sum(1 for e in ratings if e["decision"] == "unrated")
+        suffix = f" (cutoff {rate_cutoff})" if rate_cutoff is not None else ""
+        print(f"Rating: {n_kept} kept, {n_culled} culled, {n_unrated} unrated{suffix}")
+        print()
+
+        # Filter-only cull: drop 'culled'; keep 'kept' and (fail-open) 'unrated'.
+        images = [img for img in images if rating_map[img]["decision"] != "culled"]
+        if not images:
+            print("ERROR: all images culled by rating. Lower --min-rating or review the album.", file=sys.stderr)
+            sys.exit(1)
+
     analysis_results = []
     all_tags = []
 
@@ -1425,6 +1476,7 @@ def main() -> None:
             "filename": dst.name,
             "metadata": metadata,
             "validation": validation_map.get(img, {"status": "ok", "issues": []}),
+            "rating": rating_map.get(img),
         })
         all_tags.append(metadata.get("tags", []))
 
@@ -1692,6 +1744,17 @@ def main() -> None:
         "preview_url": preview_link,
         "images_uploaded": len(media_items),
         "images_analyzed": len(analysis_results),
+        "rating": {
+            "enabled": rate_enabled,
+            "cutoff": rate_cutoff,
+            "kept": sum(1 for e in ratings if e["decision"] == "kept"),
+            "culled": sum(1 for e in ratings if e["decision"] == "culled"),
+            "unrated": sum(1 for e in ratings if e["decision"] == "unrated"),
+            "scores": [
+                {"file": Path(e["original"]).name, "overall": e["overall"], "decision": e["decision"]}
+                for e in ratings
+            ],
+        },
         "working_directory": str(work_dir),
         "social_research_enabled": bool(args.social_research),
         "social_research_topic": research_topic if args.social_research else None,
