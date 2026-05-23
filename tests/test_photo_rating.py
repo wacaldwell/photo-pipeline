@@ -132,6 +132,23 @@ class GeminiRateImageTests(unittest.TestCase):
             photo_pipeline._gemini_vision_request = orig_req
             photo_pipeline._image_inline_part = orig_part
 
+    def test_rate_image_clamps_scores_to_2_10(self):
+        scores = {k: 7 for k in photo_pipeline.RATING_KEYS}
+        scores["impact"] = 11   # above range
+        scores["light"] = 1     # below range
+        body = {"scores": scores, "narrative": {}}
+        orig_req = photo_pipeline._gemini_vision_request
+        orig_part = photo_pipeline._image_inline_part
+        photo_pipeline._gemini_vision_request = lambda payload, api_key, **kw: _fake_gemini_result(body)
+        photo_pipeline._image_inline_part = lambda image_path: {"inline_data": {}}
+        try:
+            out = photo_pipeline.gemini_rate_image(Path("/nope.jpg"), "key")
+        finally:
+            photo_pipeline._gemini_vision_request = orig_req
+            photo_pipeline._image_inline_part = orig_part
+        self.assertEqual(out["scores"]["impact"], 10)  # clamped down
+        self.assertEqual(out["scores"]["light"], 2)    # clamped up
+
 
 def _scores_summing_to(per):  # helper: all 12 elements = per
     return {k: per for k in photo_pipeline.RATING_KEYS}

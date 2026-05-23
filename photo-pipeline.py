@@ -516,7 +516,10 @@ def gemini_rate_image(image_path: Path, api_key: str) -> dict:
     result = _gemini_vision_request(payload, api_key)
     data = _gemini_response_json(result)
     raw_scores = data.get("scores", {})
-    scores = {k: int(raw_scores[k]) for k in RATING_KEYS}  # KeyError/ValueError -> caller fail-open
+    # Clamp to the prompted 2-10 range so a stray out-of-range value can't skew the
+    # mean. KeyError (missing element) / ValueError (non-numeric) still propagate so
+    # the caller fails open.
+    scores = {k: max(2, min(10, int(raw_scores[k]))) for k in RATING_KEYS}
     narrative = data.get("narrative", {})
     return {"scores": scores, "narrative": narrative}
 
@@ -1360,7 +1363,7 @@ def main() -> None:
 
     # -----------------------------------------------------------------------
     # Rating gate — mirrors the validation pass. Rate every (technically valid)
-    # image against the PPA 12 Elements, then drop sub-threshold photos from
+    # image against the PPA 12 Elements, then drop below-cull-floor photos from
     # the processing set BEFORE the expensive SEO-analysis loop. Filter-only:
     # source files are never moved or deleted. Fail-open: a failed rating call
     # keeps the photo (marked 'unrated') for manual review.
