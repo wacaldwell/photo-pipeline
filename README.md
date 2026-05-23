@@ -98,23 +98,26 @@ failure to notify only warns — it never fails the pipeline.
 
 ### Rate & cull an album
 
-Score every photo 1-10 against the PPA "12 Elements of a Merit Image" and keep
-only the strong ones. Source files are never moved or deleted — culling just
-excludes weak photos from the upload.
+Score every photo 2-10 against the PPA "12 Elements of a Merit Image" (strict,
+Photo-Critique-style) and sort them into keep / maybe / cull. Source files are
+never moved or deleted — culling just excludes the weakest from the upload.
 
 ```bash
-# Rate everything and review (no cull, no upload):
+# Rate everything and review (writes ratings.json, no upload):
 python3 photo-pipeline.py /path/to/album --rate --dry-run
-#   -> writes ratings.json (12 element scores + overall + narrative per photo)
+#   -> 12 element scores + overall + narrative + keep/maybe/cull per photo
 
-# Cull below 7.0, then publish the survivors:
+# Cull the weakest, then publish keepers + maybes:
 AWS_PROFILE=hermes-photo-pipeline python3 photo-pipeline.py /path/to/album \
   --title "Album Title" --secret wordpress-mcp/photo-pipeline \
-  --target cmbpix_prod --status draft --rate --min-rating 7 --tele
+  --target cmbpix_prod --status draft --rate --tele
 ```
 
-`--min-rating` implies `--rate`. A failed rating call keeps the photo (marked
-`unrated`) for manual review rather than dropping it.
+Bands default to the Photo Critique rubric: **cull below 6.0**, **keep at/above
+8.0**, **maybe** in between (kept but flagged for your review). Override with
+`--cull-below N` / `--keep-above N`; either flag implies `--rate`. Only `cull`
+photos are excluded from upload; `maybe` and `keep` proceed. A failed rating call
+keeps the photo (marked `unrated`).
 
 With social research + editorial generation:
 

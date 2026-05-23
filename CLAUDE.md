@@ -74,7 +74,7 @@ Everything lives in `photo-pipeline.py`. Sequential, functional, no classes:
 
 1. **Config** — `fetch_aws_secret()` / `load_env()`. CLI > env > secret > default.
 2. **Discovery** — `find_images()` finds jpg/jpeg/png/webp/tif/tiff.
-2b. **Rating gate (optional)** — when `--rate`/`--min-rating` is passed, `gemini_rate_image()` scores each validated image against the PPA 12 Elements; `compute_overall()` = mean of the 12. Sub-threshold images are filtered out (filter-only — source untouched) before SEO analysis. Fail-open: a failed rating keeps the image as `unrated`. Writes `ratings.json`.
+2b. **Rating gate (optional)** — when `--rate`/`--cull-below`/`--keep-above` is passed, `gemini_rate_image()` scores each validated image 2-10 against the PPA 12 Elements; `compute_overall()` = mean of the 12. `make_rating_entry()` sorts each into keep/maybe/cull (defaults: cull <6.0, keep ≥8.0). Only `cull` is filtered out (filter-only — source untouched) before SEO analysis; `keep`/`maybe`/`unrated` proceed. Fail-open: a failed rating keeps the image as `unrated`. Writes `ratings.json`.
 3. **Analysis** — `gemini_analyze_image()` → Gemini 2.0 Flash → `{seo_filename, alt_text, caption, tags, description}`. 429 backoff, max 4 retries. Falls back to original filename on failure.
 4. **Preparation** — Rename to SEO filenames in a temp dir. Optional `sips_resize()` on macOS (off by default).
 5. **Manifest** — Writes `manifest.json`. `--dry-run` stops here.
@@ -96,17 +96,20 @@ All HTTP via `urllib` (no `requests`). **Global UA override** installed at modul
 
 ## Rating / cull specifics
 
-`--rate` enables a PPA "12 Elements" rating pass (Impact, Technical Excellence,
-Creativity, Composition, Presentation, Color Harmony, Interest Areas, Light,
-Technique, The Story, Style, Subject Matter), reusing the existing Gemini key.
-The overall score is the **mean of the 12** (computed in-code, not by the model)
-— this mirrors the "Photo Critique" GPT, whose overall is the mean +~0.1.
+`--rate` enables a strict PPA "12 Elements" rating pass (Impact, Technical
+Excellence, Creativity, Composition, Presentation, Color Harmony, Interest Areas,
+Light, Technique, The Story, Style, Subject Matter), reusing the existing Gemini
+key. Each element is scored 2-10 with explicit band guidance ("be strict; most
+snapshots are 6-7; reserve 8+ for strong work"). The overall is the **mean of the
+12** (computed in-code, not by the model), matching how the "Photo Critique" GPT
+culls.
 
-`--min-rating N` culls photos with overall < N. Culling is **filter-only**: weak
-photos are dropped from the processing set, never moved or deleted. A failed
-rating call is **fail-open** (kept, marked `unrated`). `RATING_FEW_SHOT` holds
-four real Photo-Critique examples used as text anchors to calibrate Gemini's
-scale; if the scale drifts, switch them to image few-shot.
+The decision is three-way on the overall: **cull** below `--cull-below` (default
+6.0), **keep** at/above `--keep-above` (default 8.0), **maybe** in between. Either
+flag implies `--rate`. Culling is **filter-only**: only `cull` photos are dropped
+from the processing set (never moved or deleted); `keep`/`maybe` proceed to upload.
+A failed rating call is **fail-open** (kept, marked `unrated`). No few-shot anchors
+— the strict band rubric drives calibration.
 
 ## Deployment
 
