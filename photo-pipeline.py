@@ -467,8 +467,10 @@ RATING_ELEMENTS = [
 ]
 RATING_KEYS = [key for key, _label, _defn in RATING_ELEMENTS]
 
-# Real "Photo Critique" outputs (operator-provided), used as text few-shot anchors
-# to pin Gemini's numeric scale and narrative voice. overall = mean(12), ~+0.1.
+# Per-element scores are real "Photo Critique" outputs (operator-provided), used as
+# text few-shot anchors to pin Gemini's scale and narrative voice. The shown `overall`
+# is the in-code mean of the twelve (what the pipeline thresholds on); Photo Critique
+# itself reports an overall ~0.1 higher than this mean.
 RATING_FEW_SHOT = [
     {
         "desc": "Wakeboarder mid-action behind a boat: wake, spray, diagonal tow rope, wide lake, big sky, shot in strong midday sun (shadowed face).",
@@ -482,21 +484,21 @@ RATING_FEW_SHOT = [
         "scores": {"impact": 8, "technical_excellence": 7, "creativity": 8, "composition": 7,
                    "presentation": 7, "color_harmony": 8, "interest_areas": 7, "light": 7,
                    "technique": 8, "the_story": 8, "style": 8, "subject_matter": 9},
-        "overall": 7.8,
+        "overall": 7.7,
     },
     {
         "desc": "Child playing in a backyard water spray with a colorful pinwheel; suspended droplets, warm golden light, shallow depth of field, genuine expression.",
         "scores": {"impact": 8, "technical_excellence": 8, "creativity": 8, "composition": 7,
                    "presentation": 8, "color_harmony": 8, "interest_areas": 8, "light": 7,
                    "technique": 8, "the_story": 9, "style": 8, "subject_matter": 9},
-        "overall": 8.1,
+        "overall": 8.0,
     },
     {
         "desc": "Tight winter portrait of a child with sharp expressive eyes, blue coat, olive hat, snow crystals, soft high-key snowy background; crop tight above the hat.",
         "scores": {"impact": 9, "technical_excellence": 8, "creativity": 8, "composition": 7,
                    "presentation": 8, "color_harmony": 9, "interest_areas": 8, "light": 8,
                    "technique": 8, "the_story": 8, "style": 8, "subject_matter": 9},
-        "overall": 8.3,
+        "overall": 8.2,
     },
 ]
 

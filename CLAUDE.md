@@ -74,9 +74,8 @@ Everything lives in `photo-pipeline.py`. Sequential, functional, no classes:
 
 1. **Config** — `fetch_aws_secret()` / `load_env()`. CLI > env > secret > default.
 2. **Discovery** — `find_images()` finds jpg/jpeg/png/webp/tif/tiff.
+2b. **Rating gate (optional)** — when `--rate`/`--min-rating` is passed, `gemini_rate_image()` scores each validated image against the PPA 12 Elements; `compute_overall()` = mean of the 12. Sub-threshold images are filtered out (filter-only — source untouched) before SEO analysis. Fail-open: a failed rating keeps the image as `unrated`. Writes `ratings.json`.
 3. **Analysis** — `gemini_analyze_image()` → Gemini 2.0 Flash → `{seo_filename, alt_text, caption, tags, description}`. 429 backoff, max 4 retries. Falls back to original filename on failure.
-
-3b. **Rating gate (optional)** — when `--rate`/`--min-rating` is passed, `gemini_rate_image()` scores each validated image against the PPA 12 Elements; `compute_overall()` = mean of the 12. Sub-threshold images are filtered out (filter-only — source untouched) before SEO analysis. Fail-open: a failed rating keeps the image as `unrated`. Writes `ratings.json`.
 4. **Preparation** — Rename to SEO filenames in a temp dir. Optional `sips_resize()` on macOS (off by default).
 5. **Manifest** — Writes `manifest.json`. `--dry-run` stops here.
 6. **Upload** — `wp_upload_media()` uploads each image via `/wp/v2/media` (two requests: POST bytes, PUT metadata). `attach_to` param only used for legacy CPT path.
