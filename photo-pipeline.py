@@ -1383,9 +1383,10 @@ def main() -> None:
     rate_enabled, rate_cutoff = resolve_rating_flags(args.rate, args.min_rating)
     ratings: list[dict] = []
     rating_map: dict[Path, dict] = {}
+    n_kept = n_culled = n_unrated = 0
     if rate_enabled:
         rate_delay = args.rate_delay if args.rate_delay is not None else args.delay
-        cutoff_str = "none" if rate_cutoff is None else f"{rate_cutoff}"
+        cutoff_str = "none" if rate_cutoff is None else f"{rate_cutoff:.1f}"
         print(f"Rating {len(images)} image(s) against PPA 12 Elements (cutoff {cutoff_str}) ...")
         for i, img in enumerate(images, 1):
             if i > 1 and rate_delay > 0:
@@ -1747,9 +1748,9 @@ def main() -> None:
         "rating": {
             "enabled": rate_enabled,
             "cutoff": rate_cutoff,
-            "kept": sum(1 for e in ratings if e["decision"] == "kept"),
-            "culled": sum(1 for e in ratings if e["decision"] == "culled"),
-            "unrated": sum(1 for e in ratings if e["decision"] == "unrated"),
+            "kept": n_kept,
+            "culled": n_culled,
+            "unrated": n_unrated,
             "scores": [
                 {"file": Path(e["original"]).name, "overall": e["overall"], "decision": e["decision"]}
                 for e in ratings
