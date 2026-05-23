@@ -97,6 +97,34 @@ class GeminiRateImageTests(unittest.TestCase):
         self.assertEqual(out["scores"]["impact"], 8)
         self.assertIsInstance(out["scores"]["impact"], int)
 
+    def test_rate_image_raises_on_missing_key(self):
+        incomplete = {k: 7 for k in photo_pipeline.RATING_KEYS[:-1]}  # drop one element
+        body = {"scores": incomplete, "narrative": {}}
+        orig_req = photo_pipeline._gemini_vision_request
+        orig_part = photo_pipeline._image_inline_part
+        photo_pipeline._gemini_vision_request = lambda payload, api_key, **kw: _fake_gemini_result(body)
+        photo_pipeline._image_inline_part = lambda image_path: {"inline_data": {}}
+        try:
+            with self.assertRaises(KeyError):
+                photo_pipeline.gemini_rate_image(Path("/nope.jpg"), "key")
+        finally:
+            photo_pipeline._gemini_vision_request = orig_req
+            photo_pipeline._image_inline_part = orig_part
+
+    def test_rate_image_raises_on_non_numeric_score(self):
+        bad = {k: "great" for k in photo_pipeline.RATING_KEYS}
+        body = {"scores": bad, "narrative": {}}
+        orig_req = photo_pipeline._gemini_vision_request
+        orig_part = photo_pipeline._image_inline_part
+        photo_pipeline._gemini_vision_request = lambda payload, api_key, **kw: _fake_gemini_result(body)
+        photo_pipeline._image_inline_part = lambda image_path: {"inline_data": {}}
+        try:
+            with self.assertRaises(ValueError):
+                photo_pipeline.gemini_rate_image(Path("/nope.jpg"), "key")
+        finally:
+            photo_pipeline._gemini_vision_request = orig_req
+            photo_pipeline._image_inline_part = orig_part
+
 
 if __name__ == "__main__":
     unittest.main()
