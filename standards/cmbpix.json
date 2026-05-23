@@ -1,0 +1,6 @@
+{
+  "min_width_warn": 1600,
+  "min_width_hard": 1200,
+  "min_height_hard": 800,
+  "aspect_range": "1.2:1.8"
+}

@@ -89,7 +89,7 @@ All HTTP via `urllib` (no `requests`). **Global UA override** installed at modul
 
 ## Modula specifics
 
-`MODULA_DEFAULT_SETTINGS` hardcodes `creative-gallery` type, FancyBox lightbox, 10px gutter, 800px height, white captions. Override via `settings_overrides` param to `wp_create_modula_gallery()` if you add a CLI flag for it.
+`MODULA_DEFAULT_SETTINGS` hardcodes `creative-gallery` type, FancyBox lightbox, 10px gutter, 800px height, and `effect: "none"`. The `effect: "none"` is load-bearing: if omitted, Modula's server default (`pufrobo`) renders the per-image title/description as a hover text overlay over each photo (the `item.php` template). Only the literal string `"none"` selects the overlay-free `item-none.php` — an empty string falls back to `item.php`. Override via `settings_overrides` param to `wp_create_modula_gallery()` if you add a CLI flag for it.
 
 `build_modula_images()` takes the media REST responses + per-image Gemini metadata and produces Modula's image-object list. Image `id` must be a WP attachment ID. Filter tags (Modula Pro `filters` field) are not wired via CLI — add there if needed; the Pro extension's `modula_gallery_image_attributes` hook will accept/whitelist them only when Pro is licensed.
 

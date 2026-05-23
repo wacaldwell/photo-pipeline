@@ -113,6 +113,24 @@ post body. Override the query with `--social-topic`, the source set with
 v3 skill requires Python 3.12+ for its own runtime even though this pipeline
 itself still runs on Python 3.10+.
 
+With strict export standard enforcement:
+
+```bash
+python3 photo-pipeline.py /path/to/album \
+  --dry-run \
+  --standard-control \
+  --standard-profile cmbpix
+```
+
+This loads `./standards/cmbpix.json`, runs the standard before Gemini, writes
+`standard_control.json`, and stops the run if any image misses the standard.
+The shipped `cmbpix` profile currently enforces:
+
+- hard reject below `1200px` width
+- hard reject below `800px` height
+- soft warn below `1600px` width
+- hard reject outside aspect ratio `1.2:1.8`
+
 ## Agent invocation contract
 
 `photo-pipeline.py` is the canonical implementation. Agents, skills, and
@@ -170,6 +188,7 @@ Agent behavior:
 - Renamed images in a temp working directory
 - `manifest.json` with per-image metadata from Gemini
 - `summary.json` with post URL and stats
+- `standard_control.json` when `--standard-control` is enabled
 - `social_research.json` and `post_draft.json` when `--social-research` is enabled
 - A WordPress draft post with a gallery block and tags
 

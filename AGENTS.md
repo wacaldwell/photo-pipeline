@@ -121,30 +121,19 @@ Only touch the skill repo if you're changing the **invocation contract or agent 
 <claude-mem-context>
 # Memory Context
 
-# [photo-pipeline] recent context, 2026-05-17 9:29am EDT
+# [photo-pipeline] recent context, 2026-05-18 2:32pm EDT
 
 Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
 Format: ID TIME TYPE TITLE
 Fetch details: get_observations([IDs]) | Search: mem-search skill
 
-Stats: 50 obs (16,381t read) | 545,793t work | 97% savings
+Stats: 50 obs (16,390t read) | 353,914t work | 95% savings
 
 ### May 15, 2026
 S96 Spec approved; implementation plan written, committed, and user choosing execution approach (May 15 at 8:56 PM)
 S93 Status check on `--tele` Telegram notification feature for photo-pipeline (May 15 at 8:56 PM)
 ### May 16, 2026
 S97 Continue working on photo-pipeline feat/telegram-notify branch — complete implementation, review, and prepare for merge (May 16 at 7:37 AM)
-305 9:31a 🟣 Telegram credential resolution wired into photo-pipeline main()
-306 " 🟣 Guarded telegram_notify() call site added after WP publish summary write
-307 " 🟣 Smoke test confirms --tele flag accepted by argparse without error
-304 9:57a 🟣 Task 4 complete: telegram_notify() call site wired into main()
-308 11:18a 🟣 All 4 telegram_notify unit tests pass after Task 4 wiring
-309 " 🟣 Task 4 committed: --tele wiring merged to feat/telegram-notify at 87fe8f9
-310 " 🟣 feat/telegram-notify branch commit history confirmed — 5 commits, Tasks 1-4 complete
-311 " 🔵 Task 5 and 6 exact content confirmed from plan file
-312 11:41a 🟣 photo-pipeline --tele flag: env.example TELEGRAM_* vars documented
-313 12:46p ✅ photo-pipeline README.md: --tele example block inserted before Agent invocation contract
-314 " 🔵 README.md HEAD lacks "Agent invocation contract" section — it's uncommitted pre-existing dirty content
 315 1:06p ⚖️ README.md Task 6: targeted patch approach to isolate --tele block from pre-existing dirty content
 316 1:07p 🔵 tele-only.patch has correct LF line endings — patch context references ## Output not ## Agent invocation contract
 318 " ⚖️ README.md Task 6: second patch attempt with corrected hunk header @@ -76,7 +76,23 @@
@@ -191,6 +180,18 @@ S104 photo-pipeline feat/telegram-notify: ship Telegram --tele notification feat
 351 " ✅ Selective revert of claude-mem-context block in AGENTS.md
 352 5:39p ✅ photo-pipeline docs: agent invocation contract added to AGENTS.md, CLAUDE.md, README.md
 353 " 🔵 .omc/ directory not in photo-pipeline .gitignore
+### May 17, 2026
+386 8:38a 🟣 photo-pipeline: social research and editorial generation shipped to GitHub
+387 " 🔵 photo-pipeline dry-run: social research fails with missing `last30days` command
+388 9:29a 🔵 photo-pipeline internal architecture: social research, editorial generation, and validation
+389 " 🟣 photo-pipeline: standard-control feature implemented in photo-pipeline.py
+390 12:19p 🔴 photo-pipeline: removed erroneous `standard_report.write_text = None` line
+391 " 🟣 photo-pipeline: standard-control status added to run summary JSON
+392 " 🟣 photo-pipeline: cmbpix standard profile created at standards/cmbpix.json
+393 " ✅ photo-pipeline README: standard-control usage example and output artifact documented
+395 " 🔵 photo-pipeline: `--target cmbpix_*` auto-defaults CPT to `modula-gallery`
+394 12:20p 🔵 photo-pipeline standard-control smoke test: exits early on missing GEMINI_API_KEY before standard validation runs
+396 12:24p 🟣 photo-pipeline standard-control: end-to-end validation confirmed working — all 7 bagel images rejected
 
-Access 546k tokens of past work via get_observations([IDs]) or mem-search skill.
+Access 354k tokens of past work via get_observations([IDs]) or mem-search skill.
 </claude-mem-context>

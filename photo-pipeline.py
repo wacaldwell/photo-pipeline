@@ -42,6 +42,8 @@ _opener = urllib.request.build_opener()
 _opener.addheaders = [("User-Agent", "cmbpix-photo-pipeline/1.0 (+https://github.com/anthropics)")]
 urllib.request.install_opener(_opener)
 
+DEFAULT_STANDARD_PROFILE = "cmbpix"
+
 
 def fetch_aws_secret(secret_id: str, region: str = "us-east-1") -> dict:
     """Fetch a JSON secret from AWS Secrets Manager via the aws CLI.
@@ -375,6 +377,26 @@ def build_post_content(intro_html: str, gallery_block: str, outro_html: str) -> 
     return "\n\n".join(parts)
 
 
+def load_standard_profile(
+    profile_name: str,
+    script_dir: Path,
+    profile_path: str | None = None,
+) -> dict:
+    """Load a standard-control profile from JSON."""
+    if profile_path:
+        path = Path(profile_path).expanduser()
+    else:
+        path = script_dir / "standards" / f"{profile_name}.json"
+
+    if not path.exists():
+        raise FileNotFoundError(f"standard profile not found: {path}")
+
+    raw = json.loads(path.read_text())
+    raw["_profile_name"] = profile_name
+    raw["_profile_path"] = str(path)
+    return raw
+
+
 def find_images(album_dir: Path) -> list[Path]:
     """Find all supported image files in the album directory."""
     images = []
@@ -626,6 +648,8 @@ def validate_image(
     path: Path,
     min_width_warn: int,
     min_width_hard: int,
+    min_height_warn: int | None,
+    min_height_hard: int | None,
     max_size_mb_warn: float,
     max_size_mb_hard: float,
     aspect_min: float,
@@ -678,6 +702,11 @@ def validate_image(
         note("reject", f"width {w}px < {min_width_hard}px (hard min)")
     elif w < min_width_warn:
         note("warn", f"width {w}px < {min_width_warn}px (soft min)")
+
+    if min_height_hard and h < min_height_hard:
+        note("reject", f"height {h}px < {min_height_hard}px (hard min)")
+    elif min_height_warn and h < min_height_warn:
+        note("warn", f"height {h}px < {min_height_warn}px (soft min)")
 
     if aspect < aspect_min or aspect > aspect_max:
         note("reject", f"aspect ratio {aspect:.2f} outside [{aspect_min}, {aspect_max}]")
@@ -887,6 +916,13 @@ MODULA_DEFAULT_SETTINGS = {
     "captionColor": "rgba(255,255,255,1)",
     "enableTwitter": 0,
     "enableFacebook": 0,
+    # Disable the hover-caption overlay. If `effect` is omitted, Modula's
+    # server-side default fills in "pufrobo", which renders the per-image
+    # title + description as a text overlay on top of each photo (item.php).
+    # Only the exact string "none" selects item-none.php (image only, no
+    # caption block) — an empty string falls back to item.php and still
+    # shows the overlay. We want just the gallery, so force "none".
+    "effect": "none",
 }
 
 
@@ -1122,6 +1158,14 @@ def main() -> None:
     parser.add_argument("--last30days-script", type=str, default=None,
         help="Path to the last30days executable or script. Overrides "
              "LAST30DAYS_SCRIPT and auto-detection.")
+    parser.add_argument("--standard-control", action="store_true",
+        help="Enforce a named photo standard before Gemini/upload. Any image "
+             "that fails the standard blocks the run.")
+    parser.add_argument("--standard-profile", type=str, default=DEFAULT_STANDARD_PROFILE,
+        help=f"Standard-control profile name (default: {DEFAULT_STANDARD_PROFILE}).")
+    parser.add_argument("--standard-profile-path", type=str, default=None,
+        help="Explicit JSON path for a standard-control profile. Overrides "
+             "--standard-profile file lookup in ./standards/.")
     args = parser.parse_args()
 
     # Defensive default: cmbpix_* targets always mean a Modula gallery. The
@@ -1137,6 +1181,20 @@ def main() -> None:
 
     script_dir = Path(__file__).resolve().parent
     env = load_env(script_dir / ".env")
+    standard_profile = None
+    if args.standard_control:
+        if args.no_validate:
+            print("ERROR: --standard-control cannot be combined with --no-validate.", file=sys.stderr)
+            sys.exit(1)
+        try:
+            standard_profile = load_standard_profile(
+                profile_name=args.standard_profile,
+                script_dir=script_dir,
+                profile_path=args.standard_profile_path,
+            )
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            sys.exit(1)
 
     # Resolution order for each value: CLI arg > env var > AWS secret > .env file > default.
     secret = fetch_aws_secret(args.secret, args.aws_region) if args.secret else {}
@@ -1188,6 +1246,24 @@ def main() -> None:
     # -----------------------------------------------------------------------
     aspect_min, aspect_max = parse_aspect_range(args.aspect_range)
     validation_map: dict[Path, dict] = {}
+    standard_report: dict | None = None
+
+    if standard_profile:
+        aspect_value = standard_profile.get("aspect_range", args.aspect_range)
+        aspect_min, aspect_max = parse_aspect_range(aspect_value)
+        min_width_warn = int(standard_profile.get("min_width_warn", args.min_width))
+        min_width_hard = int(standard_profile.get("min_width_hard", args.min_width_hard))
+        min_height_warn = standard_profile.get("min_height_warn")
+        min_height_hard = standard_profile.get("min_height_hard")
+        max_file_size_warn_mb = float(standard_profile.get("max_file_size_warn_mb", args.max_file_size_warn_mb))
+        max_file_size_mb = float(standard_profile.get("max_file_size_mb", args.max_file_size_mb))
+    else:
+        min_width_warn = args.min_width
+        min_width_hard = args.min_width_hard
+        min_height_warn = None
+        min_height_hard = None
+        max_file_size_warn_mb = args.max_file_size_warn_mb
+        max_file_size_mb = args.max_file_size_mb
 
     if args.no_validate:
         for img in images:
@@ -1198,10 +1274,12 @@ def main() -> None:
         for img in images:
             v = validate_image(
                 img,
-                min_width_warn=args.min_width,
-                min_width_hard=args.min_width_hard,
-                max_size_mb_warn=args.max_file_size_warn_mb,
-                max_size_mb_hard=args.max_file_size_mb,
+                min_width_warn=min_width_warn,
+                min_width_hard=min_width_hard,
+                min_height_warn=min_height_warn,
+                min_height_hard=min_height_hard,
+                max_size_mb_warn=max_file_size_warn_mb,
+                max_size_mb_hard=max_file_size_mb,
                 aspect_min=aspect_min,
                 aspect_max=aspect_max,
                 require_srgb=args.require_srgb,
@@ -1219,6 +1297,45 @@ def main() -> None:
         print(f"Validation: {n_ok} ok, {n_warn} warn, {n_reject} rejected")
         print()
 
+        if standard_profile:
+            standard_report = {
+                "enabled": True,
+                "profile_name": standard_profile["_profile_name"],
+                "profile_path": standard_profile["_profile_path"],
+                "rules": {
+                    "min_width_warn": min_width_warn,
+                    "min_width_hard": min_width_hard,
+                    "min_height_warn": min_height_warn,
+                    "min_height_hard": min_height_hard,
+                    "aspect_range": f"{aspect_min}:{aspect_max}",
+                },
+                "counts": {
+                    "ok": n_ok,
+                    "warn": n_warn,
+                    "reject": n_reject,
+                },
+                "images": [
+                    {
+                        "file": img.name,
+                        "path": str(img),
+                        **validation_map[img],
+                    }
+                    for img in images
+                ],
+            }
+
+            if n_reject:
+                print(
+                    "ERROR: standard-control rejected one or more images. "
+                    "Fix the export and rerun.",
+                    file=sys.stderr,
+                )
+                work_dir = Path(tempfile.mkdtemp(prefix="photo-pipeline-"))
+                report_path = work_dir / "standard_control.json"
+                report_path.write_text(json.dumps(standard_report, indent=2))
+                print(f"Standard report written: {report_path}", file=sys.stderr)
+                sys.exit(1)
+
         images = [img for img in images if validation_map[img]["status"] != "reject"]
         if not images:
             print("ERROR: all images rejected by validation. Nothing to process.", file=sys.stderr)
@@ -1234,6 +1351,12 @@ def main() -> None:
     work_dir = Path(tempfile.mkdtemp(prefix="photo-pipeline-"))
     print(f"Working directory: {work_dir}")
     print()
+
+    if standard_report:
+        standard_report_path = work_dir / "standard_control.json"
+        standard_report_path.write_text(json.dumps(standard_report, indent=2))
+        print(f"Standard report written: {standard_report_path}")
+        print()
 
     analysis_results = []
     all_tags = []
@@ -1555,6 +1678,8 @@ def main() -> None:
         "images_uploaded": len(media_items),
         "images_analyzed": len(analysis_results),
         "working_directory": str(work_dir),
+        "standard_control_enabled": bool(args.standard_control),
+        "standard_profile": standard_profile.get("_profile_name") if standard_profile else None,
         "social_research_enabled": bool(args.social_research),
         "social_research_topic": research_topic if args.social_research else None,
         "social_research_status": research_result.get("status") if research_result else None,
