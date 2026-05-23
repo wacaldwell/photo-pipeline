@@ -1234,6 +1234,14 @@ def main() -> None:
              "telegram_bot_token, telegram_chat_id, and "
              "telegram_content_creative_thread_id in the AWS secret (or the "
              "corresponding TELEGRAM_* env vars). No-op with --dry-run.")
+    parser.add_argument("--rate", action="store_true",
+        help="Rate each image 1-10 against the PPA 12 Elements before SEO analysis; "
+             "writes ratings.json. Culls nothing on its own.")
+    parser.add_argument("--min-rating", type=float, default=None,
+        help="Cull cutoff on the overall (mean) rating; implies --rate. "
+             "Images scoring below this are excluded from upload (source files untouched).")
+    parser.add_argument("--rate-delay", type=float, default=None,
+        help="Seconds between rating API calls (default: same as --delay).")
     parser.add_argument("--social-research", action="store_true",
         help="Run last30days social/community research for the gallery topic "
              "and generate matching editorial copy for the WP post body.")
