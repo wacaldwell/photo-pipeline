@@ -67,6 +67,7 @@ Agent behavior:
 - **Pass `--tele` by default.** Sends a plain-text Telegram message with the wp-admin edit URL to the user's content/creative topic on successful publish. Credentials are already in the AWS secret (`telegram_bot_token`, `telegram_chat_id`, `telegram_content_creative_thread_id`). No-op under `--dry-run`. Notification failures only warn — they never fail the pipeline, so passing `--tele` is safe even if the bot is down.
 - Report the final `post_id`, `post_title`, `edit_url`, `preview_url`, `images_uploaded`, and `images_analyzed` from `summary.json`.
 - On failure, report the command, exit status, and the relevant stderr/stdout lines. Do not retry with altered publishing flags unless the user asks.
+- **Do not pass `--rate` / `--min-rating` unless the user asks to cull.** Rating is operator-facing and off by default. If asked to cull, prefer `--rate --dry-run` first so the user can review `ratings.json` before any photos are excluded.
 
 ## Architecture
 
