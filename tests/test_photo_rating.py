@@ -61,5 +61,42 @@ class RatingPromptTests(unittest.TestCase):
         self.assertIn("Golden Gate", prompt)       # a few-shot anchor leaked into prompt
 
 
+class GeminiRateImageTests(unittest.TestCase):
+    def _scores(self):
+        return {k: 7 for k in photo_pipeline.RATING_KEYS}
+
+    def test_rate_image_parses_fenced_json_response(self):
+        body = {"scores": self._scores(),
+                "narrative": {"impression": "i", "strongest": "s", "refine": "r",
+                              "improvement": "imp", "titles": ["t1", "t2"]}}
+        orig_req = photo_pipeline._gemini_vision_request
+        orig_part = photo_pipeline._image_inline_part
+        photo_pipeline._gemini_vision_request = lambda payload, api_key, **kw: _fake_gemini_result(body)
+        photo_pipeline._image_inline_part = lambda image_path: {"inline_data": {}}
+        try:
+            out = photo_pipeline.gemini_rate_image(Path("/nope.jpg"), "key")
+        finally:
+            photo_pipeline._gemini_vision_request = orig_req
+            photo_pipeline._image_inline_part = orig_part
+        self.assertEqual(set(out["scores"].keys()), set(photo_pipeline.RATING_KEYS))
+        self.assertEqual(out["scores"]["impact"], 7)
+        self.assertEqual(out["narrative"]["titles"], ["t1", "t2"])
+
+    def test_rate_image_coerces_scores_to_int(self):
+        scores = {k: "8" for k in photo_pipeline.RATING_KEYS}  # strings from model
+        body = {"scores": scores, "narrative": {}}
+        orig_req = photo_pipeline._gemini_vision_request
+        orig_part = photo_pipeline._image_inline_part
+        photo_pipeline._gemini_vision_request = lambda payload, api_key, **kw: _fake_gemini_result(body, fenced=False)
+        photo_pipeline._image_inline_part = lambda image_path: {"inline_data": {}}
+        try:
+            out = photo_pipeline.gemini_rate_image(Path("/nope.jpg"), "key")
+        finally:
+            photo_pipeline._gemini_vision_request = orig_req
+            photo_pipeline._image_inline_part = orig_part
+        self.assertEqual(out["scores"]["impact"], 8)
+        self.assertIsInstance(out["scores"]["impact"], int)
+
+
 if __name__ == "__main__":
     unittest.main()

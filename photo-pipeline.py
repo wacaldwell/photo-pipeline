@@ -531,6 +531,29 @@ def build_rating_prompt(few_shot: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def gemini_rate_image(image_path: Path, api_key: str,
+                      few_shot: list[dict] | None = None) -> dict:
+    """Rate one photo against the PPA 12 Elements. Returns {"scores": {...}, "narrative": {...}}."""
+    if few_shot is None:
+        few_shot = RATING_FEW_SHOT
+    prompt = build_rating_prompt(few_shot)
+    payload = {
+        "contents": [
+            {"parts": [{"text": prompt}, _image_inline_part(image_path)]}
+        ],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 1500,
+        },
+    }
+    result = _gemini_vision_request(payload, api_key)
+    data = _gemini_response_json(result)
+    raw_scores = data.get("scores", {})
+    scores = {k: int(raw_scores[k]) for k in RATING_KEYS}  # KeyError/ValueError -> caller fail-open
+    narrative = data.get("narrative", {})
+    return {"scores": scores, "narrative": narrative}
+
+
 def gemini_analyze_image(image_path: Path, api_key: str) -> dict:
     """Send an image to Gemini and get SEO metadata back."""
     prompt = (
