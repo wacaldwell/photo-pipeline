@@ -449,6 +449,88 @@ def _gemini_response_json(result: dict) -> dict:
     return json.loads(text)
 
 
+# PPA "12 Elements of a Merit Image" — the rubric the "Photo Critique" GPT uses.
+# (json_key, Display Label, one-line definition)
+RATING_ELEMENTS = [
+    ("impact",              "Impact",              "the sense one gets upon viewing; emotional or intellectual response"),
+    ("technical_excellence","Technical Excellence","print/image quality: exposure, sharpness, noise, artifacts, retouching"),
+    ("creativity",          "Creativity",          "original, fresh, imaginative expression of the subject"),
+    ("composition",         "Composition",         "arrangement of elements; balance, flow, use of the frame"),
+    ("presentation",        "Presentation",        "how the image is finished/framed; nothing distracts from it"),
+    ("color_harmony",       "Color Harmony",       "colors work together to support the image (or effective monochrome)"),
+    ("interest_areas",      "Interest Areas",      "a clear center of interest; the eye is led there, not distracted"),
+    ("light",               "Light",               "quality and use of lighting to shape the subject and mood"),
+    ("technique",           "Technique",           "skillful use of tools/approach (DOF, motion, lens choice, etc.)"),
+    ("the_story",           "The Story",           "the image tells a story or evokes a narrative/feeling"),
+    ("style",               "Style",               "a distinctive, intentional visual approach"),
+    ("subject_matter",      "Subject Matter",      "appropriateness and appeal of the chosen subject"),
+]
+RATING_KEYS = [key for key, _label, _defn in RATING_ELEMENTS]
+
+# Real "Photo Critique" outputs (operator-provided), used as text few-shot anchors
+# to pin Gemini's numeric scale and narrative voice. overall = mean(12), ~+0.1.
+RATING_FEW_SHOT = [
+    {
+        "desc": "Wakeboarder mid-action behind a boat: wake, spray, diagonal tow rope, wide lake, big sky, shot in strong midday sun (shadowed face).",
+        "scores": {"impact": 8, "technical_excellence": 7, "creativity": 7, "composition": 7,
+                   "presentation": 7, "color_harmony": 8, "interest_areas": 7, "light": 6,
+                   "technique": 8, "the_story": 8, "style": 7, "subject_matter": 8},
+        "overall": 7.3,
+    },
+    {
+        "desc": "Golden Gate Bridge through soft out-of-focus foreground foliage; longer-lens compression stacking bridge, hills, water, sky; tower slightly cropped at top.",
+        "scores": {"impact": 8, "technical_excellence": 7, "creativity": 8, "composition": 7,
+                   "presentation": 7, "color_harmony": 8, "interest_areas": 7, "light": 7,
+                   "technique": 8, "the_story": 8, "style": 8, "subject_matter": 9},
+        "overall": 7.8,
+    },
+    {
+        "desc": "Child playing in a backyard water spray with a colorful pinwheel; suspended droplets, warm golden light, shallow depth of field, genuine expression.",
+        "scores": {"impact": 8, "technical_excellence": 8, "creativity": 8, "composition": 7,
+                   "presentation": 8, "color_harmony": 8, "interest_areas": 8, "light": 7,
+                   "technique": 8, "the_story": 9, "style": 8, "subject_matter": 9},
+        "overall": 8.1,
+    },
+    {
+        "desc": "Tight winter portrait of a child with sharp expressive eyes, blue coat, olive hat, snow crystals, soft high-key snowy background; crop tight above the hat.",
+        "scores": {"impact": 9, "technical_excellence": 8, "creativity": 8, "composition": 7,
+                   "presentation": 8, "color_harmony": 9, "interest_areas": 8, "light": 8,
+                   "technique": 8, "the_story": 8, "style": 8, "subject_matter": 9},
+        "overall": 8.3,
+    },
+]
+
+
+def build_rating_prompt(few_shot: list[dict]) -> str:
+    """Build the Gemini rating prompt: PPA rubric + JSON schema + text few-shot anchors."""
+    lines = [
+        "You are an expert photography judge using the PPA \"12 Elements of a Merit "
+        "Image\". Score the photograph on each element from 1 to 10 (integers).",
+        "",
+        "Elements:",
+    ]
+    for _key, label, defn in RATING_ELEMENTS:
+        lines.append(f"- {label}: {defn}")
+    lines += [
+        "",
+        "Return ONLY a JSON object (no markdown fences, no extra text) with exactly:",
+        '{"scores": {' + ", ".join(f'"{k}": <1-10>' for k in RATING_KEYS) + "},",
+        '  "narrative": {"impression": "...", "strongest": "...", "refine": "...",'
+        ' "improvement": "...", "titles": ["...", "..."]}}',
+        "",
+        "Calibration examples (subject -> scores -> overall = mean of the twelve):",
+    ]
+    for ex in few_shot:
+        score_str = ", ".join(f"{k}:{ex['scores'][k]}" for k in RATING_KEYS)
+        lines.append(f"- {ex['desc']}")
+        lines.append(f"    scores: {score_str}  (overall {ex['overall']})")
+    lines += [
+        "",
+        "Judge the provided image on the same scale and in the same voice.",
+    ]
+    return "\n".join(lines)
+
+
 def gemini_analyze_image(image_path: Path, api_key: str) -> dict:
     """Send an image to Gemini and get SEO metadata back."""
     prompt = (

@@ -45,5 +45,21 @@ class SharedGeminiPlumbingTests(unittest.TestCase):
         self.assertEqual(result["tags"], ["x", "y"])
 
 
+class RatingPromptTests(unittest.TestCase):
+    def test_rating_keys_are_the_twelve_ppa_elements(self):
+        self.assertEqual(len(photo_pipeline.RATING_KEYS), 12)
+        for k in ["impact", "technical_excellence", "creativity", "composition",
+                  "presentation", "color_harmony", "interest_areas", "light",
+                  "technique", "the_story", "style", "subject_matter"]:
+            self.assertIn(k, photo_pipeline.RATING_KEYS)
+
+    def test_prompt_mentions_elements_and_json_and_examples(self):
+        prompt = photo_pipeline.build_rating_prompt(photo_pipeline.RATING_FEW_SHOT)
+        self.assertIn("Impact", prompt)
+        self.assertIn("subject_matter", prompt)   # schema key present
+        self.assertIn("JSON", prompt)
+        self.assertIn("Golden Gate", prompt)       # a few-shot anchor leaked into prompt
+
+
 if __name__ == "__main__":
     unittest.main()
