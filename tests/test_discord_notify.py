@@ -12,6 +12,7 @@ import sys
 import unittest
 import urllib.error
 from contextlib import redirect_stderr
+from email.message import Message
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -86,6 +87,27 @@ class DiscordNotifyTests(unittest.TestCase):
             )
         self.assertIn("Discord", buf.getvalue())
         self.assertIn("HTTP 400", buf.getvalue())
+
+    def test_swallows_error_while_reading_http_error_body(self):
+        response_body = MagicMock()
+        response_body.read.side_effect = TimeoutError("response body timed out")
+        err = urllib.error.HTTPError(
+            url=self.WEBHOOK,
+            code=429,
+            msg="Too Many Requests",
+            hdrs=Message(),
+            fp=response_body,
+        )
+        buf = io.StringIO()
+        with patch("urllib.request.urlopen", side_effect=err), redirect_stderr(buf):
+            photo_pipeline.discord_notify(
+                webhook_url=self.WEBHOOK,
+                title="x",
+                edit_url="https://e/",
+                image_count=1,
+            )
+        self.assertIn("HTTP 429", buf.getvalue())
+        self.assertIn("error body unavailable", buf.getvalue())
 
     def test_swallows_transport_error(self):
         buf = io.StringIO()

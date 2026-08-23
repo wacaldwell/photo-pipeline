@@ -115,7 +115,10 @@ def discord_notify(
         with urllib.request.urlopen(req, timeout=timeout):
             pass
     except urllib.error.HTTPError as e:
-        snippet = e.read()[:200].decode("utf-8", errors="replace") if e.fp else ""
+        try:
+            snippet = e.read()[:200].decode("utf-8", errors="replace") if e.fp else ""
+        except Exception:
+            snippet = "<error body unavailable>"
         print(
             f"WARN: Discord notify failed: HTTP {e.code} {e.reason} {snippet}",
             file=sys.stderr,
