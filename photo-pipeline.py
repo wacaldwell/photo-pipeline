@@ -87,46 +87,44 @@ def load_env(env_path: Path) -> dict[str, str]:
     return env
 
 
-def telegram_notify(
-    token: str,
-    chat_id: int | str,
-    thread_id: int,
+def discord_notify(
+    webhook_url: str,
     title: str,
     edit_url: str,
     image_count: int,
     timeout: float = 10.0,
 ) -> None:
-    """Best-effort Telegram notification. Never raises.
+    """Best-effort Discord webhook notification. Never raises.
 
-    Posts a plain-text sendMessage to the given chat + topic. On any HTTP or
-    transport error, prints a warning to stderr and returns. The pipeline's
-    exit code reflects WP upload success, not notification success.
+    Posts a plain-text message to the configured webhook with all mentions
+    suppressed. On any error, prints a warning to stderr and returns. The
+    pipeline's exit code reflects WP upload success, not notification success.
     """
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    text = f"📸 New gallery: {title} ({image_count} photos)\n✏️ {edit_url}"
-    body = json.dumps({
-        "chat_id": chat_id,
-        "message_thread_id": thread_id,
-        "text": text,
-        "disable_web_page_preview": False,
-    }).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
     try:
+        text = f"📸 New gallery: {title} ({image_count} photos)\n✏️ {edit_url}"
+        body = json.dumps({
+            "content": text,
+            "allowed_mentions": {"parse": []},
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            webhook_url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
         with urllib.request.urlopen(req, timeout=timeout):
             pass
     except urllib.error.HTTPError as e:
-        snippet = e.read()[:200].decode("utf-8", errors="replace") if e.fp else ""
+        try:
+            snippet = e.read()[:200].decode("utf-8", errors="replace") if e.fp else ""
+        except Exception:
+            snippet = "<error body unavailable>"
         print(
-            f"WARN: Telegram notify failed: HTTP {e.code} {e.reason} {snippet}",
+            f"WARN: Discord notify failed: HTTP {e.code} {e.reason} {snippet}",
             file=sys.stderr,
         )
-    except (urllib.error.URLError, TimeoutError, OSError) as e:
-        print(f"WARN: Telegram notify failed: {e}", file=sys.stderr)
+    except Exception as e:
+        print(f"WARN: Discord notify failed: {e}", file=sys.stderr)
 
 
 def gemini_generate_json(prompt: str, api_key: str, max_output_tokens: int = 2048) -> dict:
@@ -1098,12 +1096,12 @@ def main() -> None:
         help="Promote all validation warnings to hard rejects.")
     parser.add_argument("--no-validate", action="store_true",
         help="Skip the validation pass entirely (not recommended).")
-    parser.add_argument("--tele", action="store_true",
-        help="On successful WP publish, send a Telegram message with the "
-             "wp-admin edit URL to the content/creative topic. Requires "
-             "telegram_bot_token, telegram_chat_id, and "
-             "telegram_content_creative_thread_id in the AWS secret (or the "
-             "corresponding TELEGRAM_* env vars). No-op with --dry-run.")
+    parser.add_argument("--discord", action="store_true",
+        help="On successful WP publish, send a Discord webhook message with "
+             "the wp-admin edit URL. Requires discord_webhook_url in the AWS "
+             "secret (or DISCORD_WEBHOOK_URL). No-op with --dry-run.")
+    parser.add_argument("--tele", dest="discord", action="store_true",
+        help=argparse.SUPPRESS)
     parser.add_argument("--social-research", action="store_true",
         help="Run last30days social/community research for the gallery topic "
              "and generate matching editorial copy for the WP post body.")
@@ -1157,9 +1155,7 @@ def main() -> None:
     wp_url      = pick(args.wp_url,       "WP_URL",          None,             "url",          "http://mvd-clawbase:8087")
     wp_user     = pick(args.wp_user,      "WP_USER",         None,             "user",         "admin")
     wp_password = pick(args.wp_password,  "WP_APP_PASSWORD", None,             "app_password", "")
-    tg_token   = pick(None, "TELEGRAM_BOT_TOKEN",                     "telegram_bot_token",                     None)
-    tg_chat    = pick(None, "TELEGRAM_CHAT_ID",                       "telegram_chat_id",                       None)
-    tg_thread  = pick(None, "TELEGRAM_CONTENT_CREATIVE_THREAD_ID",    "telegram_content_creative_thread_id",    None)
+    discord_webhook_url = pick(None, "DISCORD_WEBHOOK_URL", "discord_webhook_url", None)
     max_width = args.max_width or int(env.get("MAX_WIDTH", "1920"))
     quality = args.quality or int(env.get("JPEG_QUALITY", "85"))
     last30days_command = resolve_last30days_command(args.last30days_script, env)
@@ -1566,29 +1562,19 @@ def main() -> None:
     summary_path = work_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, indent=2))
 
-    if args.tele and not args.dry_run:
-        if tg_token and tg_chat and tg_thread:
-            try:
-                chat_id_val = int(tg_chat)
-            except (TypeError, ValueError):
-                chat_id_val = tg_chat
-            try:
-                thread_id_val = int(tg_thread)
-            except (TypeError, ValueError):
-                thread_id_val = tg_thread
-            telegram_notify(
-                token=tg_token,
-                chat_id=chat_id_val,
-                thread_id=thread_id_val,
+    if args.discord and not args.dry_run:
+        if discord_webhook_url:
+            discord_notify(
+                webhook_url=discord_webhook_url,
                 title=post_title,
                 edit_url=edit_link,
                 image_count=len(media_items),
             )
         else:
             print(
-                "WARN: --tele set but Telegram creds missing "
-                "(need telegram_bot_token, telegram_chat_id, "
-                "telegram_content_creative_thread_id); skipping notify.",
+                "WARN: --discord set but Discord webhook missing "
+                "(need discord_webhook_url or DISCORD_WEBHOOK_URL); "
+                "skipping notify.",
                 file=sys.stderr,
             )
 
