@@ -15,7 +15,8 @@ AWS_PROFILE=clownshow python3 photo-pipeline.py /path/to/album \
   --cpt modula-gallery \
   --category food \
   --featured \
-  --secret wordpress-mcp/photo-pipeline \
+  --secret platform/wordpress-publishing/runtime \
+  --secret-json-key photo_pipeline \
   --target cmbpix_prod \
   --status draft \
   --discord
@@ -42,7 +43,8 @@ Recommended cmbpix production invocation (for agents):
 ```bash
 AWS_PROFILE=hermes-photo-pipeline python3 photo-pipeline.py /path/to/album \
   --title "Album Title" \
-  --secret wordpress-mcp/photo-pipeline \
+  --secret platform/wordpress-publishing/runtime \
+  --secret-json-key photo_pipeline \
   --target cmbpix_prod \
   --status draft \
   --discord
@@ -52,7 +54,7 @@ For `cmbpix_*` targets, the CLI automatically defaults to `--cpt modula-gallery`
 
 ### Credentials for agents
 
-Use the dedicated IAM profile `hermes-photo-pipeline`, **never** the human admin profile (`clownshow` / SSO). The agent profile has exactly one permission: `secretsmanager:GetSecretValue` on `wordpress-mcp/photo-pipeline*`. No IAM access, no other secrets, no console login. Blast radius is one read-only secret.
+Use the dedicated IAM profile `hermes-photo-pipeline`, **never** a human admin profile. The agent profile has exactly one permission: `secretsmanager:GetSecretValue` on `platform/wordpress-publishing/runtime`. The CLI selects only the nested `photo_pipeline` object. No IAM access, no other secrets, no console login. Blast radius is one read-only grouped secret.
 
 Provisioning + rotation of this IAM user is managed in [`clownshow-infra`](https://github.com/wacaldwell/clownshow-infra) → `iam/hermes-photo-pipeline/` (Terraform). If the profile doesn't exist on the agent host, follow that module's README to provision and harvest credentials into `~/.aws/credentials`.
 
@@ -95,7 +97,7 @@ All HTTP via `urllib` (no `requests`). **Global UA override** installed at modul
 
 ## Deployment
 
-The pipeline runs from any host that has AWS credentials for the `clownshow` profile with read access to the `wordpress-mcp/photo-pipeline` secret. It uploads over HTTPS to the target WordPress REST API. There is no CI/CD; the old `deploy-to-vm.yml` workflow was deleted on 2026-04-16 (never worked after Feb 19, no self-hosted runner registered).
+The pipeline runs from any host that has AWS credentials for the `hermes-photo-pipeline` profile with read access to `platform/wordpress-publishing/runtime`. It selects the nested `photo_pipeline` object and uploads over HTTPS to the target WordPress REST API. There is no CI/CD; the old `deploy-to-vm.yml` workflow was deleted on 2026-04-16 (never worked after Feb 19, no self-hosted runner registered).
 
 Deployment target:
 - **Mac** (user-driven, interactive): AWS SSO profile `clownshow`, Modula gallery via `cmbpix-publish` skill.

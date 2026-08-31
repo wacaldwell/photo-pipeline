@@ -83,7 +83,8 @@ With Discord notification on publish:
 ```bash
 AWS_PROFILE=clownshow python3 photo-pipeline.py /path/to/album \
   --title "Bagels" \
-  --secret wordpress-mcp/photo-pipeline \
+  --secret platform/wordpress-publishing/runtime \
+  --secret-json-key photo_pipeline \
   --target cmbpix_prod \
   --status draft \
   --discord
@@ -134,7 +135,8 @@ Recommended cmbpix production invocation (for agents):
 ```bash
 AWS_PROFILE=hermes-photo-pipeline python3 photo-pipeline.py /path/to/album \
   --title "Album Title" \
-  --secret wordpress-mcp/photo-pipeline \
+  --secret platform/wordpress-publishing/runtime \
+  --secret-json-key photo_pipeline \
   --target cmbpix_prod \
   --status draft \
   --discord
@@ -182,7 +184,7 @@ The pipeline is driven directly from Claude Code via the `cmbpix-publish`
 skill that lives in the cmbpix theme repo (`.claude/skills/cmbpix-publish/`).
 The skill picks the `--target` (local dev on `tools`, or prod Lightsail),
 pulls WP app password + Gemini key from AWS Secrets Manager
-(`wordpress-mcp/photo-pipeline`), and runs this pipeline with
+(`platform/wordpress-publishing/runtime`, key `photo_pipeline`), and runs this pipeline with
 `--cpt modula-gallery`. Draft is created on the target site, skill hands
 you the `edit_url`, you review and flip to publish.
 

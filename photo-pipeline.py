@@ -69,7 +69,26 @@ def fetch_aws_secret(secret_id: str, region: str = "us-east-1") -> dict:
     except subprocess.CalledProcessError as e:
         print(f"ERROR: aws secretsmanager returned {e.returncode}: {e.stderr.strip()}", file=sys.stderr)
         sys.exit(1)
-    return json.loads(result.stdout)
+    payload = json.loads(result.stdout)
+    if not isinstance(payload, dict):
+        raise ValueError("AWS secret must contain a JSON object")
+    return payload
+
+
+def select_secret_payload(secret: dict, json_key: str | None) -> dict:
+    """Select a nested object from a grouped secret without exposing values."""
+    if not json_key:
+        return secret
+
+    payload = secret
+    for component in json_key.split("."):
+        if not component or not isinstance(payload, dict) or component not in payload:
+            raise ValueError(f"AWS secret is missing required JSON object: {json_key}")
+        payload = payload[component]
+
+    if not isinstance(payload, dict):
+        raise ValueError(f"AWS secret JSON key is not an object: {json_key}")
+    return payload
 
 
 def load_env(env_path: Path) -> dict[str, str]:
@@ -1073,6 +1092,8 @@ def main() -> None:
     parser.add_argument("--secret", type=str, default=None,
         help="AWS Secrets Manager secret id holding pipeline credentials. "
              "Expected JSON: {gemini_api_key, <target>: {url, user, app_password}, ...}")
+    parser.add_argument("--secret-json-key", type=str, default=None,
+        help="Dot-separated object key inside a grouped AWS secret (for example, photo_pipeline).")
     parser.add_argument("--target", type=str, default=None,
         help="Profile key inside the secret to use for WP credentials "
              "(e.g. 'cmbpix_local', 'cmbpix_prod').")
@@ -1138,6 +1159,7 @@ def main() -> None:
 
     # Resolution order for each value: CLI arg > env var > AWS secret > .env file > default.
     secret = fetch_aws_secret(args.secret, args.aws_region) if args.secret else {}
+    secret = select_secret_payload(secret, args.secret_json_key)
     target_profile = secret.get(args.target, {}) if args.target else {}
 
     def pick(cli_val, env_key, secret_key, profile_key, default=""):
