@@ -141,13 +141,15 @@ def gemini_generate_json(prompt: str, api_key: str, max_output_tokens: int = 204
         ],
         "generationConfig": {
             "temperature": 0.3,
-            "maxOutputTokens": max_output_tokens,
+            # Gemini 3 thinking shares the output budget with the JSON response.
+            "maxOutputTokens": max_output_tokens + 8192,
+            "responseMimeType": "application/json",
         },
     }
 
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.0-flash:generateContent?key={api_key}"
+        f"gemini-3.6-flash:generateContent?key={api_key}"
     )
     req = urllib.request.Request(
         url,
@@ -401,7 +403,7 @@ def _image_inline_part(image_path: Path) -> dict:
 
 
 def _gemini_vision_request(payload: dict, api_key: str,
-                           model: str = "gemini-2.0-flash",
+                           model: str = "gemini-3.6-flash",
                            timeout: int = 60) -> dict:
     """POST a generateContent payload with 429 backoff. Return the parsed response JSON."""
     url = (
@@ -545,7 +547,9 @@ def gemini_rate_image(image_path: Path, api_key: str,
         ],
         "generationConfig": {
             "temperature": 0.1,
-            "maxOutputTokens": 1500,
+            # Leave room for Gemini 3 thinking as well as the JSON response.
+            "maxOutputTokens": 8192,
+            "responseMimeType": "application/json",
         },
     }
     result = _gemini_vision_request(payload, api_key)
@@ -608,7 +612,9 @@ def gemini_analyze_image(image_path: Path, api_key: str) -> dict:
         ],
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 512,
+            # Leave room for Gemini 3 thinking as well as the JSON response.
+            "maxOutputTokens": 8192,
+            "responseMimeType": "application/json",
         },
     }
     result = _gemini_vision_request(payload, api_key)
