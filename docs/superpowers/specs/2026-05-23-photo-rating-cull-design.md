@@ -50,7 +50,7 @@ All four are strong photos (7.3-8.3); the **bottom of the scale is uncalibrated*
 The rating gate slots in alongside the existing validation pass:
 
 ```
-find_images → technical validation → ★ rating gate → SEO analysis (keepers only) → manifest → upload → gallery → summary → telegram
+find_images → technical validation → ★ rating gate → SEO analysis (keepers only) → manifest → upload → gallery → summary
 ```
 
 - Runs only on images that passed technical validation (`status != "reject"`); warn-status images are still rated.

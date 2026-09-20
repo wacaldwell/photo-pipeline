@@ -78,24 +78,6 @@ Override WordPress target:
 python3 photo-pipeline.py /path/to/album --wp-url http://myhost:8087
 ```
 
-With Telegram notification on publish:
-
-```bash
-AWS_PROFILE=clownshow python3 photo-pipeline.py /path/to/album \
-  --title "Bagels" \
-  --secret wordpress-mcp/photo-pipeline \
-  --target cmbpix_prod \
-  --status draft \
-  --tele
-```
-
-Requires `telegram_bot_token`, `telegram_chat_id`, and
-`telegram_content_creative_thread_id` in the AWS secret (or matching
-`TELEGRAM_*` env vars). Sends a plain-text message containing the
-wp-admin edit URL (draft preview URLs return 404 to anonymous viewers,
-so the edit link is more useful in practice). No-op with `--dry-run`;
-failure to notify only warns — it never fails the pipeline.
-
 ### Rate & cull an album
 
 Score every photo 1-10 against the PPA "12 Elements of a Merit Image" and keep
@@ -110,7 +92,7 @@ python3 photo-pipeline.py /path/to/album --rate --dry-run
 # Cull below 7.0, then publish the survivors:
 AWS_PROFILE=hermes-photo-pipeline python3 photo-pipeline.py /path/to/album \
   --title "Album Title" --secret wordpress-mcp/photo-pipeline \
-  --target cmbpix_prod --status draft --rate --min-rating 7 --tele
+  --target cmbpix_prod --status draft --rate --min-rating 7
 ```
 
 `--min-rating` implies `--rate`. A failed rating call keeps the photo (marked
@@ -153,8 +135,7 @@ AWS_PROFILE=hermes-photo-pipeline python3 photo-pipeline.py /path/to/album \
   --title "Album Title" \
   --secret wordpress-mcp/photo-pipeline \
   --target cmbpix_prod \
-  --status draft \
-  --tele
+  --status draft
 ```
 
 For `cmbpix_*` targets, the CLI automatically defaults to
@@ -176,10 +157,6 @@ Agent behavior:
 - Prefer `--status draft` so the user can review before publishing.
 - Add `--category <slug>` only when the user provides a known curated category.
 - Add `--featured` only when the user asks for a featured gallery.
-- **Pass `--tele` by default.** Sends a plain-text Telegram message with
-  the wp-admin edit URL to the user's content/creative topic on
-  successful publish. No-op under `--dry-run`. Notification failures only
-  warn — they never fail the pipeline.
 - Report the final `post_id`, `post_title`, `edit_url`, `preview_url`,
   `images_uploaded`, and `images_analyzed` from `summary.json`.
 - On failure, report the command, exit status, and the relevant stderr/stdout

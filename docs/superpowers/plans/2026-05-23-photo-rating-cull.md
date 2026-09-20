@@ -583,11 +583,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### Task 5: CLI flags
 
 **Files:**
-- Modify: `photo-pipeline.py` (argparse block in `main()`, near `--tele` at line ~1137)
+- Modify: `photo-pipeline.py` (argparse block in `main()`)
 
 - [ ] **Step 1: Add the three arguments**
 
-Immediately after the `--tele` argument definition (line ~1137-1142) in `main()`, add:
+In the argument definitions in `main()`, add:
 
 ```python
     parser.add_argument("--rate", action="store_true",
@@ -776,7 +776,7 @@ python3 photo-pipeline.py /path/to/album --rate --dry-run
 # Cull below 7.0, then publish the survivors:
 AWS_PROFILE=hermes-photo-pipeline python3 photo-pipeline.py /path/to/album \
   --title "Album Title" --secret wordpress-mcp/photo-pipeline \
-  --target cmbpix_prod --status draft --rate --min-rating 7 --tele
+  --target cmbpix_prod --status draft --rate --min-rating 7
 ```
 
 `--min-rating` implies `--rate`. A failed rating call keeps the photo (marked
