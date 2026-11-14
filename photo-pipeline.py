@@ -139,13 +139,15 @@ def gemini_generate_json(prompt: str, api_key: str, max_output_tokens: int = 204
         ],
         "generationConfig": {
             "temperature": 0.3,
-            "maxOutputTokens": max_output_tokens,
+            # Gemini 3 thinking shares the output budget with the JSON response.
+            "maxOutputTokens": max_output_tokens + 8192,
+            "responseMimeType": "application/json",
         },
     }
 
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.0-flash:generateContent?key={api_key}"
+        f"gemini-3.6-flash:generateContent?key={api_key}"
     )
     req = urllib.request.Request(
         url,
@@ -382,11 +384,10 @@ def find_images(album_dir: Path) -> list[Path]:
     return images
 
 
-def gemini_analyze_image(image_path: Path, api_key: str) -> dict:
-    """Send an image to Gemini Pro Vision and get SEO metadata back."""
+def _image_inline_part(image_path: Path) -> dict:
+    """Build a Gemini inline_data part (base64 image + mime type) for a file."""
     image_bytes = image_path.read_bytes()
     b64_image = base64.b64encode(image_bytes).decode("utf-8")
-
     mime_map = {
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
@@ -396,7 +397,201 @@ def gemini_analyze_image(image_path: Path, api_key: str) -> dict:
         ".tiff": "image/tiff",
     }
     mime_type = mime_map.get(image_path.suffix.lower(), "image/jpeg")
+    return {"inline_data": {"mime_type": mime_type, "data": b64_image}}
 
+
+def _gemini_vision_request(payload: dict, api_key: str,
+                           model: str = "gemini-3.6-flash",
+                           timeout: int = 60) -> dict:
+    """POST a generateContent payload with 429 backoff. Return the parsed response JSON."""
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{model}:generateContent?key={api_key}"
+    )
+    data = json.dumps(payload).encode("utf-8")
+    max_retries = 7
+    for attempt in range(max_retries):
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="replace")
+            if e.code == 429 and attempt < max_retries - 1:
+                # Prefer server's Retry-After; otherwise exponential backoff capped
+                # at 60s. Jitter avoids herd-retry on concurrent runs.
+                retry_after = e.headers.get("Retry-After") if e.headers else None
+                if retry_after and retry_after.strip().isdigit():
+                    wait = min(60.0, float(retry_after.strip()))
+                else:
+                    wait = min(60.0, 2 ** (attempt + 1) + 1)
+                wait += random.uniform(0, 1.5)
+                print(f"  Rate limited (429), waiting {wait:.1f}s (attempt {attempt + 1}/{max_retries}) ...", file=sys.stderr)
+                time.sleep(wait)
+                continue
+            print(f"  ERROR: Gemini API returned {e.code}: {body[:300]}", file=sys.stderr)
+            raise
+    raise RuntimeError("Gemini request exhausted retries")
+
+
+def _gemini_response_json(result: dict) -> dict:
+    """Extract the model's text from a Gemini response and parse it as JSON, tolerating ``` fences."""
+    text = result["candidates"][0]["content"]["parts"][0]["text"].strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```\w*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text)
+        text = text.strip()
+    return json.loads(text)
+
+
+# PPA "12 Elements of a Merit Image" — the rubric the "Photo Critique" GPT uses.
+# (json_key, Display Label, one-line definition)
+RATING_ELEMENTS = [
+    ("impact",              "Impact",              "the sense one gets upon viewing; emotional or intellectual response"),
+    ("technical_excellence","Technical Excellence","print/image quality: exposure, sharpness, noise, artifacts, retouching"),
+    ("creativity",          "Creativity",          "original, fresh, imaginative expression of the subject"),
+    ("composition",         "Composition",         "arrangement of elements; balance, flow, use of the frame"),
+    ("presentation",        "Presentation",        "how the image is finished/framed; nothing distracts from it"),
+    ("color_harmony",       "Color Harmony",       "colors work together to support the image (or effective monochrome)"),
+    ("interest_areas",      "Interest Areas",      "a clear center of interest; the eye is led there, not distracted"),
+    ("light",               "Light",               "quality and use of lighting to shape the subject and mood"),
+    ("technique",           "Technique",           "skillful use of tools/approach (DOF, motion, lens choice, etc.)"),
+    ("the_story",           "The Story",           "the image tells a story or evokes a narrative/feeling"),
+    ("style",               "Style",               "a distinctive, intentional visual approach"),
+    ("subject_matter",      "Subject Matter",      "appropriateness and appeal of the chosen subject"),
+]
+RATING_KEYS = [key for key, _label, _defn in RATING_ELEMENTS]
+
+# Per-element scores are real "Photo Critique" outputs (operator-provided), used as
+# text few-shot anchors to pin Gemini's scale and narrative voice. The shown `overall`
+# is the in-code mean of the twelve (what the pipeline thresholds on); Photo Critique
+# itself reports an overall ~0.1 higher than this mean.
+RATING_FEW_SHOT = [
+    {
+        "desc": "Wakeboarder mid-action behind a boat: wake, spray, diagonal tow rope, wide lake, big sky, shot in strong midday sun (shadowed face).",
+        "scores": {"impact": 8, "technical_excellence": 7, "creativity": 7, "composition": 7,
+                   "presentation": 7, "color_harmony": 8, "interest_areas": 7, "light": 6,
+                   "technique": 8, "the_story": 8, "style": 7, "subject_matter": 8},
+        "overall": 7.3,
+    },
+    {
+        "desc": "Golden Gate Bridge through soft out-of-focus foreground foliage; longer-lens compression stacking bridge, hills, water, sky; tower slightly cropped at top.",
+        "scores": {"impact": 8, "technical_excellence": 7, "creativity": 8, "composition": 7,
+                   "presentation": 7, "color_harmony": 8, "interest_areas": 7, "light": 7,
+                   "technique": 8, "the_story": 8, "style": 8, "subject_matter": 9},
+        "overall": 7.7,
+    },
+    {
+        "desc": "Child playing in a backyard water spray with a colorful pinwheel; suspended droplets, warm golden light, shallow depth of field, genuine expression.",
+        "scores": {"impact": 8, "technical_excellence": 8, "creativity": 8, "composition": 7,
+                   "presentation": 8, "color_harmony": 8, "interest_areas": 8, "light": 7,
+                   "technique": 8, "the_story": 9, "style": 8, "subject_matter": 9},
+        "overall": 8.0,
+    },
+    {
+        "desc": "Tight winter portrait of a child with sharp expressive eyes, blue coat, olive hat, snow crystals, soft high-key snowy background; crop tight above the hat.",
+        "scores": {"impact": 9, "technical_excellence": 8, "creativity": 8, "composition": 7,
+                   "presentation": 8, "color_harmony": 9, "interest_areas": 8, "light": 8,
+                   "technique": 8, "the_story": 8, "style": 8, "subject_matter": 9},
+        "overall": 8.2,
+    },
+]
+
+
+def build_rating_prompt(few_shot: list[dict]) -> str:
+    """Build the Gemini rating prompt: PPA rubric + JSON schema + text few-shot anchors."""
+    lines = [
+        "You are an expert photography judge using the PPA \"12 Elements of a Merit "
+        "Image\". Score the photograph on each element from 1 to 10 (integers).",
+        "",
+        "Elements:",
+    ]
+    for _key, label, defn in RATING_ELEMENTS:
+        lines.append(f"- {label}: {defn}")
+    lines += [
+        "",
+        "Return ONLY a JSON object (no markdown fences, no extra text) with exactly:",
+        '{"scores": {' + ", ".join(f'"{k}": <1-10>' for k in RATING_KEYS) + "},",
+        '  "narrative": {"impression": "...", "strongest": "...", "refine": "...",'
+        ' "improvement": "...", "titles": ["...", "..."]}}',
+        "",
+        "Calibration examples (subject -> scores -> overall = mean of the twelve):",
+    ]
+    for ex in few_shot:
+        score_str = ", ".join(f"{k}:{ex['scores'][k]}" for k in RATING_KEYS)
+        lines.append(f"- {ex['desc']}")
+        lines.append(f"    scores: {score_str}  (overall {ex['overall']})")
+    lines += [
+        "",
+        "Judge the provided image on the same scale and in the same voice.",
+    ]
+    return "\n".join(lines)
+
+
+def gemini_rate_image(image_path: Path, api_key: str,
+                      few_shot: list[dict] | None = None) -> dict:
+    """Rate one photo against the PPA 12 Elements. Returns {"scores": {...}, "narrative": {...}}."""
+    if few_shot is None:
+        few_shot = RATING_FEW_SHOT
+    prompt = build_rating_prompt(few_shot)
+    payload = {
+        "contents": [
+            {"parts": [{"text": prompt}, _image_inline_part(image_path)]}
+        ],
+        "generationConfig": {
+            "temperature": 0.1,
+            # Leave room for Gemini 3 thinking as well as the JSON response.
+            "maxOutputTokens": 8192,
+            "responseMimeType": "application/json",
+        },
+    }
+    result = _gemini_vision_request(payload, api_key)
+    data = _gemini_response_json(result)
+    raw_scores = data.get("scores", {})
+    scores = {k: int(raw_scores[k]) for k in RATING_KEYS}  # KeyError/ValueError -> caller fail-open
+    narrative = data.get("narrative", {})
+    return {"scores": scores, "narrative": narrative}
+
+
+def compute_overall(scores: dict) -> float:
+    """Overall rating = mean of the 12 element scores, rounded to 1 decimal."""
+    vals = [scores[k] for k in RATING_KEYS]
+    return round(sum(vals) / len(vals), 1)
+
+
+def make_rating_entry(original: Path, rating: dict | None,
+                      min_rating: float | None) -> dict:
+    """Build a ratings.json entry with a kept/culled/unrated decision.
+
+    Fail-open: a None rating (API failure) is 'unrated' and kept for manual review.
+    No cutoff (rate-only mode) keeps everything.
+    """
+    if rating is None:
+        return {"original": str(original), "scores": None, "overall": None,
+                "decision": "unrated", "narrative": None}
+    overall = compute_overall(rating["scores"])
+    if min_rating is None:
+        decision = "kept"
+    else:
+        decision = "kept" if overall >= min_rating else "culled"
+    return {"original": str(original), "scores": rating["scores"],
+            "overall": overall, "decision": decision,
+            "narrative": rating.get("narrative")}
+
+
+def resolve_rating_flags(rate: bool, min_rating: float | None) -> tuple[bool, float | None]:
+    """--min-rating implies --rate. Returns (rating_enabled, cutoff)."""
+    enabled = bool(rate or min_rating is not None)
+    return enabled, min_rating
+
+
+def gemini_analyze_image(image_path: Path, api_key: str) -> dict:
+    """Send an image to Gemini and get SEO metadata back."""
     prompt = (
         "Analyze this photograph and return a JSON object with exactly these keys:\n"
         '- "seo_filename": a lowercase, hyphenated, SEO-friendly filename '
@@ -409,76 +604,19 @@ def gemini_analyze_image(image_path: Path, api_key: str) -> dict:
         "\n"
         "Return ONLY valid JSON, no markdown fences, no extra text."
     )
-
     payload = {
         "contents": [
-            {
-                "parts": [
-                    {"text": prompt},
-                    {
-                        "inline_data": {
-                            "mime_type": mime_type,
-                            "data": b64_image,
-                        }
-                    },
-                ]
-            }
+            {"parts": [{"text": prompt}, _image_inline_part(image_path)]}
         ],
         "generationConfig": {
             "temperature": 0.2,
-            "maxOutputTokens": 512,
+            # Leave room for Gemini 3 thinking as well as the JSON response.
+            "maxOutputTokens": 8192,
+            "responseMimeType": "application/json",
         },
     }
-
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.0-flash:generateContent?key={api_key}"
-    )
-
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-
-    max_retries = 7
-    for attempt in range(max_retries):
-        try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                result = json.loads(resp.read().decode("utf-8"))
-            break
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")
-            if e.code == 429 and attempt < max_retries - 1:
-                # Prefer server's Retry-After; otherwise exponential backoff capped at 60s.
-                # Jitter avoids herd-retry on concurrent runs.
-                retry_after = e.headers.get("Retry-After") if e.headers else None
-                if retry_after and retry_after.strip().isdigit():
-                    wait = min(60.0, float(retry_after.strip()))
-                else:
-                    wait = min(60.0, 2 ** (attempt + 1) + 1)
-                wait += random.uniform(0, 1.5)
-                print(f"  Rate limited (429), waiting {wait:.1f}s (attempt {attempt + 1}/{max_retries}) ...", file=sys.stderr)
-                time.sleep(wait)
-                req = urllib.request.Request(
-                    url,
-                    data=json.dumps(payload).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
-                    method="POST",
-                )
-                continue
-            print(f"  ERROR: Gemini API returned {e.code}: {body[:300]}", file=sys.stderr)
-            raise
-
-    text = result["candidates"][0]["content"]["parts"][0]["text"]
-    text = text.strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```\w*\n?", "", text)
-        text = re.sub(r"\n?```$", "", text)
-        text = text.strip()
-
-    return json.loads(text)
+    result = _gemini_vision_request(payload, api_key)
+    return _gemini_response_json(result)
 
 
 def sips_resize(src: Path, dst: Path, max_width: int, quality: int) -> None:
@@ -1096,6 +1234,14 @@ def main() -> None:
         help="Promote all validation warnings to hard rejects.")
     parser.add_argument("--no-validate", action="store_true",
         help="Skip the validation pass entirely (not recommended).")
+    parser.add_argument("--rate", action="store_true",
+        help="Rate each image 1-10 against the PPA 12 Elements before SEO analysis; "
+             "writes ratings.json. Culls nothing on its own.")
+    parser.add_argument("--min-rating", type=float, default=None,
+        help="Cull cutoff on the overall (mean) rating; implies --rate. "
+             "Images scoring below this are excluded from upload (source files untouched).")
+    parser.add_argument("--rate-delay", type=float, default=None,
+        help="Seconds between rating API calls (default: same as --delay).")
     parser.add_argument("--discord", action="store_true",
         help="On successful WP publish, send a Discord webhook message with "
              "the wp-admin edit URL. Requires discord_webhook_url in the AWS "
@@ -1231,6 +1377,58 @@ def main() -> None:
     print(f"Working directory: {work_dir}")
     print()
 
+    # -----------------------------------------------------------------------
+    # Rating gate — mirrors the validation pass. Rate every (technically valid)
+    # image against the PPA 12 Elements, then drop sub-threshold photos from
+    # the processing set BEFORE the expensive SEO-analysis loop. Filter-only:
+    # source files are never moved or deleted. Fail-open: a failed rating call
+    # keeps the photo (marked 'unrated') for manual review.
+    # -----------------------------------------------------------------------
+    rate_enabled, rate_cutoff = resolve_rating_flags(args.rate, args.min_rating)
+    ratings: list[dict] = []
+    rating_map: dict[Path, dict] = {}
+    n_kept = n_culled = n_unrated = 0
+    if rate_enabled:
+        rate_delay = args.rate_delay if args.rate_delay is not None else args.delay
+        cutoff_str = "none" if rate_cutoff is None else f"{rate_cutoff:.1f}"
+        print(f"Rating {len(images)} image(s) against PPA 12 Elements (cutoff {cutoff_str}) ...")
+        for i, img in enumerate(images, 1):
+            if i > 1 and rate_delay > 0:
+                time.sleep(rate_delay)
+            print(f"[rate {i}/{len(images)}] {img.name} ...")
+            try:
+                rating = gemini_rate_image(img, gemini_key)
+            except Exception as e:
+                print(f"  RATING FAILED (kept for manual review): {e}", file=sys.stderr)
+                rating = None
+            entry = make_rating_entry(img, rating, rate_cutoff)
+            rating_map[img] = entry
+            ratings.append(entry)
+            ov = "n/a" if entry["overall"] is None else f"{entry['overall']:.1f}"
+            print(f"  overall={ov}  {entry['decision']}")
+
+        ratings_path = work_dir / "ratings.json"
+        ratings_path.write_text(json.dumps(ratings, indent=2))
+        print(f"Ratings written: {ratings_path}")
+
+        print()
+        print("Rating results (high to low):")
+        for e in sorted(ratings, key=lambda e: (e["overall"] is not None, e["overall"] or 0), reverse=True):
+            ov = "n/a" if e["overall"] is None else f"{e['overall']:.1f}"
+            print(f"  {ov:>4}  {e['decision']:<7}  {Path(e['original']).name}")
+        n_kept = sum(1 for e in ratings if e["decision"] == "kept")
+        n_culled = sum(1 for e in ratings if e["decision"] == "culled")
+        n_unrated = sum(1 for e in ratings if e["decision"] == "unrated")
+        suffix = f" (cutoff {rate_cutoff})" if rate_cutoff is not None else ""
+        print(f"Rating: {n_kept} kept, {n_culled} culled, {n_unrated} unrated{suffix}")
+        print()
+
+        # Filter-only cull: drop 'culled'; keep 'kept' and (fail-open) 'unrated'.
+        images = [img for img in images if rating_map[img]["decision"] != "culled"]
+        if not images:
+            print("ERROR: all images culled by rating. Lower --min-rating or review the album.", file=sys.stderr)
+            sys.exit(1)
+
     analysis_results = []
     all_tags = []
 
@@ -1283,6 +1481,7 @@ def main() -> None:
             "filename": dst.name,
             "metadata": metadata,
             "validation": validation_map.get(img, {"status": "ok", "issues": []}),
+            "rating": rating_map.get(img),
         })
         all_tags.append(metadata.get("tags", []))
 
@@ -1550,6 +1749,17 @@ def main() -> None:
         "preview_url": preview_link,
         "images_uploaded": len(media_items),
         "images_analyzed": len(analysis_results),
+        "rating": {
+            "enabled": rate_enabled,
+            "cutoff": rate_cutoff,
+            "kept": n_kept,
+            "culled": n_culled,
+            "unrated": n_unrated,
+            "scores": [
+                {"file": Path(e["original"]).name, "overall": e["overall"], "decision": e["decision"]}
+                for e in ratings
+            ],
+        },
         "working_directory": str(work_dir),
         "social_research_enabled": bool(args.social_research),
         "social_research_topic": research_topic if args.social_research else None,

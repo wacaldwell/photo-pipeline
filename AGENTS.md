@@ -67,6 +67,7 @@ Agent behavior:
 - **Pass `--discord` by default.** Sends a plain-text Discord webhook message with the wp-admin edit URL on successful publish. The webhook is already in the AWS secret (`discord_webhook_url`). No-op under `--dry-run`. Notification failures only warn — they never fail the pipeline, so passing `--discord` is safe even if Discord is down. The hidden `--tele` compatibility alias enables this same Discord path and never sends Telegram requests.
 - Report the final `post_id`, `post_title`, `edit_url`, `preview_url`, `images_uploaded`, and `images_analyzed` from `summary.json`.
 - On failure, report the command, exit status, and the relevant stderr/stdout lines. Do not retry with altered publishing flags unless the user asks.
+- **Do not pass `--rate` / `--min-rating` unless the user asks to cull.** Rating is operator-facing and off by default. If asked to cull, prefer `--rate --dry-run` first so the user can review `ratings.json` before any photos are excluded.
 
 ## Architecture
 

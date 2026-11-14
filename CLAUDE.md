@@ -74,6 +74,7 @@ Everything lives in `photo-pipeline.py`. Sequential, functional, no classes:
 
 1. **Config** — `fetch_aws_secret()` / `load_env()`. CLI > env > secret > default.
 2. **Discovery** — `find_images()` finds jpg/jpeg/png/webp/tif/tiff.
+2b. **Rating gate (optional)** — when `--rate`/`--min-rating` is passed, `gemini_rate_image()` scores each validated image against the PPA 12 Elements; `compute_overall()` = mean of the 12. Sub-threshold images are filtered out (filter-only — source untouched) before SEO analysis. Fail-open: a failed rating keeps the image as `unrated`. Writes `ratings.json`.
 3. **Analysis** — `gemini_analyze_image()` → Gemini 2.0 Flash → `{seo_filename, alt_text, caption, tags, description}`. 429 backoff, max 4 retries. Falls back to original filename on failure.
 4. **Preparation** — Rename to SEO filenames in a temp dir. Optional `sips_resize()` on macOS (off by default).
 5. **Manifest** — Writes `manifest.json`. `--dry-run` stops here.
@@ -92,6 +93,20 @@ All HTTP via `urllib` (no `requests`). **Global UA override** installed at modul
 `MODULA_DEFAULT_SETTINGS` hardcodes `creative-gallery` type, FancyBox lightbox, 10px gutter, 800px height, white captions. Override via `settings_overrides` param to `wp_create_modula_gallery()` if you add a CLI flag for it.
 
 `build_modula_images()` takes the media REST responses + per-image Gemini metadata and produces Modula's image-object list. Image `id` must be a WP attachment ID. Filter tags (Modula Pro `filters` field) are not wired via CLI — add there if needed; the Pro extension's `modula_gallery_image_attributes` hook will accept/whitelist them only when Pro is licensed.
+
+## Rating / cull specifics
+
+`--rate` enables a PPA "12 Elements" rating pass (Impact, Technical Excellence,
+Creativity, Composition, Presentation, Color Harmony, Interest Areas, Light,
+Technique, The Story, Style, Subject Matter), reusing the existing Gemini key.
+The overall score is the **mean of the 12** (computed in-code, not by the model)
+— this mirrors the "Photo Critique" GPT, whose overall is the mean +~0.1.
+
+`--min-rating N` culls photos with overall < N. Culling is **filter-only**: weak
+photos are dropped from the processing set, never moved or deleted. A failed
+rating call is **fail-open** (kept, marked `unrated`). `RATING_FEW_SHOT` holds
+four real Photo-Critique examples used as text anchors to calibrate Gemini's
+scale; if the scale drifts, switch them to image few-shot.
 
 ## Deployment
 

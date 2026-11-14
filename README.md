@@ -78,6 +78,26 @@ Override WordPress target:
 python3 photo-pipeline.py /path/to/album --wp-url http://myhost:8087
 ```
 
+### Rate & cull an album
+
+Score every photo 1-10 against the PPA "12 Elements of a Merit Image" and keep
+only the strong ones. Source files are never moved or deleted — culling just
+excludes weak photos from the upload.
+
+```bash
+# Rate everything and review (no cull, no upload):
+python3 photo-pipeline.py /path/to/album --rate --dry-run
+#   -> writes ratings.json (12 element scores + overall + narrative per photo)
+
+# Cull below 7.0, then publish the survivors:
+AWS_PROFILE=hermes-photo-pipeline python3 photo-pipeline.py /path/to/album \
+  --title "Album Title" --secret wordpress-mcp/photo-pipeline \
+  --target cmbpix_prod --status draft --rate --min-rating 7
+```
+
+`--min-rating` implies `--rate`. A failed rating call keeps the photo (marked
+`unrated`) for manual review rather than dropping it.
+
 With Discord notification on publish:
 
 ```bash
