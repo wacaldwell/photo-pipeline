@@ -98,6 +98,27 @@ AWS_PROFILE=hermes-photo-pipeline python3 photo-pipeline.py /path/to/album \
 `--min-rating` implies `--rate`. A failed rating call keeps the photo (marked
 `unrated`) for manual review rather than dropping it.
 
+With Discord notification on publish:
+
+```bash
+AWS_PROFILE=clownshow python3 photo-pipeline.py /path/to/album \
+  --title "Bagels" \
+  --secret wordpress-mcp/photo-pipeline \
+  --target cmbpix_prod \
+  --status draft \
+  --discord
+```
+
+Requires `discord_webhook_url` in the AWS secret (or
+`DISCORD_WEBHOOK_URL` in the environment). Sends a plain-text Discord
+webhook message containing the
+wp-admin edit URL (draft preview URLs return 404 to anonymous viewers,
+so the edit link is more useful in practice). No-op with `--dry-run`;
+failure to notify only warns — it never fails the pipeline.
+
+`--tele` remains accepted as a hidden compatibility alias for `--discord`.
+It no longer resolves Telegram credentials or sends Telegram requests.
+
 With social research + editorial generation:
 
 ```bash
@@ -135,7 +156,8 @@ AWS_PROFILE=hermes-photo-pipeline python3 photo-pipeline.py /path/to/album \
   --title "Album Title" \
   --secret wordpress-mcp/photo-pipeline \
   --target cmbpix_prod \
-  --status draft
+  --status draft \
+  --discord
 ```
 
 For `cmbpix_*` targets, the CLI automatically defaults to
@@ -157,6 +179,10 @@ Agent behavior:
 - Prefer `--status draft` so the user can review before publishing.
 - Add `--category <slug>` only when the user provides a known curated category.
 - Add `--featured` only when the user asks for a featured gallery.
+- **Pass `--discord` by default.** Sends a plain-text Discord webhook message
+  with the wp-admin edit URL on
+  successful publish. No-op under `--dry-run`. Notification failures only
+  warn — they never fail the pipeline.
 - Report the final `post_id`, `post_title`, `edit_url`, `preview_url`,
   `images_uploaded`, and `images_analyzed` from `summary.json`.
 - On failure, report the command, exit status, and the relevant stderr/stdout

@@ -87,6 +87,46 @@ def load_env(env_path: Path) -> dict[str, str]:
     return env
 
 
+def discord_notify(
+    webhook_url: str,
+    title: str,
+    edit_url: str,
+    image_count: int,
+    timeout: float = 10.0,
+) -> None:
+    """Best-effort Discord webhook notification. Never raises.
+
+    Posts a plain-text message to the configured webhook with all mentions
+    suppressed. On any error, prints a warning to stderr and returns. The
+    pipeline's exit code reflects WP upload success, not notification success.
+    """
+    try:
+        text = f"📸 New gallery: {title} ({image_count} photos)\n✏️ {edit_url}"
+        body = json.dumps({
+            "content": text,
+            "allowed_mentions": {"parse": []},
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            webhook_url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout):
+            pass
+    except urllib.error.HTTPError as e:
+        try:
+            snippet = e.read()[:200].decode("utf-8", errors="replace") if e.fp else ""
+        except Exception:
+            snippet = "<error body unavailable>"
+        print(
+            f"WARN: Discord notify failed: HTTP {e.code} {e.reason} {snippet}",
+            file=sys.stderr,
+        )
+    except Exception as e:
+        print(f"WARN: Discord notify failed: {e}", file=sys.stderr)
+
+
 def gemini_generate_json(prompt: str, api_key: str, max_output_tokens: int = 2048) -> dict:
     """Send a text-only prompt to Gemini and parse the JSON response."""
     payload = {
@@ -1202,6 +1242,12 @@ def main() -> None:
              "Images scoring below this are excluded from upload (source files untouched).")
     parser.add_argument("--rate-delay", type=float, default=None,
         help="Seconds between rating API calls (default: same as --delay).")
+    parser.add_argument("--discord", action="store_true",
+        help="On successful WP publish, send a Discord webhook message with "
+             "the wp-admin edit URL. Requires discord_webhook_url in the AWS "
+             "secret (or DISCORD_WEBHOOK_URL). No-op with --dry-run.")
+    parser.add_argument("--tele", dest="discord", action="store_true",
+        help=argparse.SUPPRESS)
     parser.add_argument("--social-research", action="store_true",
         help="Run last30days social/community research for the gallery topic "
              "and generate matching editorial copy for the WP post body.")
@@ -1255,6 +1301,7 @@ def main() -> None:
     wp_url      = pick(args.wp_url,       "WP_URL",          None,             "url",          "http://mvd-clawbase:8087")
     wp_user     = pick(args.wp_user,      "WP_USER",         None,             "user",         "admin")
     wp_password = pick(args.wp_password,  "WP_APP_PASSWORD", None,             "app_password", "")
+    discord_webhook_url = pick(None, "DISCORD_WEBHOOK_URL", "discord_webhook_url", None)
     max_width = args.max_width or int(env.get("MAX_WIDTH", "1920"))
     quality = args.quality or int(env.get("JPEG_QUALITY", "85"))
     last30days_command = resolve_last30days_command(args.last30days_script, env)
@@ -1724,6 +1771,22 @@ def main() -> None:
     }
     summary_path = work_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, indent=2))
+
+    if args.discord and not args.dry_run:
+        if discord_webhook_url:
+            discord_notify(
+                webhook_url=discord_webhook_url,
+                title=post_title,
+                edit_url=edit_link,
+                image_count=len(media_items),
+            )
+        else:
+            print(
+                "WARN: --discord set but Discord webhook missing "
+                "(need discord_webhook_url or DISCORD_WEBHOOK_URL); "
+                "skipping notify.",
+                file=sys.stderr,
+            )
 
     print()
     print("Done.")
