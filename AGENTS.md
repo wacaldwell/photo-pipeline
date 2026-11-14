@@ -118,76 +118,85 @@ Only touch the skill repo if you're changing the **invocation contract or agent 
 <claude-mem-context>
 # Memory Context
 
-# [photo-pipeline] recent context, 2026-05-17 9:29am EDT
+# [photo-pipeline] recent context, 2026-09-09 1:46pm EDT
 
 Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
 Format: ID TIME TYPE TITLE
 Fetch details: get_observations([IDs]) | Search: mem-search skill
 
-Stats: 50 obs (16,381t read) | 545,793t work | 97% savings
+Stats: 50 obs (18,889t read) | 1,448,778t work | 99% savings
 
-### May 15, 2026
-S96 Spec approved; implementation plan written, committed, and user choosing execution approach (May 15 at 8:56 PM)
-S93 Status check on `--tele` Telegram notification feature for photo-pipeline (May 15 at 8:56 PM)
-### May 16, 2026
-S97 Continue working on photo-pipeline feat/telegram-notify branch — complete implementation, review, and prepare for merge (May 16 at 7:37 AM)
-305 9:31a 🟣 Telegram credential resolution wired into photo-pipeline main()
-306 " 🟣 Guarded telegram_notify() call site added after WP publish summary write
-307 " 🟣 Smoke test confirms --tele flag accepted by argparse without error
-304 9:57a 🟣 Task 4 complete: telegram_notify() call site wired into main()
-308 11:18a 🟣 All 4 telegram_notify unit tests pass after Task 4 wiring
-309 " 🟣 Task 4 committed: --tele wiring merged to feat/telegram-notify at 87fe8f9
-310 " 🟣 feat/telegram-notify branch commit history confirmed — 5 commits, Tasks 1-4 complete
-311 " 🔵 Task 5 and 6 exact content confirmed from plan file
-312 11:41a 🟣 photo-pipeline --tele flag: env.example TELEGRAM_* vars documented
-313 12:46p ✅ photo-pipeline README.md: --tele example block inserted before Agent invocation contract
-314 " 🔵 README.md HEAD lacks "Agent invocation contract" section — it's uncommitted pre-existing dirty content
-315 1:06p ⚖️ README.md Task 6: targeted patch approach to isolate --tele block from pre-existing dirty content
-316 1:07p 🔵 tele-only.patch has correct LF line endings — patch context references ## Output not ## Agent invocation contract
-318 " ⚖️ README.md Task 6: second patch attempt with corrected hunk header @@ -76,7 +76,23 @@
-319 " 🔵 README.md working tree uses em-dash (U+2014, 0xe2 0x80 0x94) in "never fails" line — patch has ASCII "--"
-317 " 🔵 HEAD README.md line 79: ## Output follows --wp-url block with single blank line — patch context matches exactly
-320 " ✅ README Updated with Telegram Notification Usage Example
-321 1:08p ✅ README Telegram Block Injected via Git Index Manipulation
-322 1:10p ✅ README Telegram Docs Committed to feat/telegram-notify Branch
-323 " 🟣 Agent Invocation Contract Section Added to README
-324 " 🔵 git add -p Cannot Split Adjacent Hunks — Used hash-object Workaround
-325 1:11p ✅ feat/telegram-notify Branch Task 6 Verified Complete — Task 10 Started
-326 " 🔵 feat/telegram-notify Branch Has 7 Commits — Full Implementation Visible
-327 " 🔵 feat/telegram-notify Branch Total Scope: 203 Lines Across 5 Files
-328 " 🔵 photo-pipeline Telegram Notify Spec and Implementation Plan Located
-329 1:12p 🔵 telegram_notify() Implementation Drops resp.status Check — Relies on urllib HTTPError
-330 1:18p 🟣 telegram_notify() Unit Tests All Pass — Feature Implementation Verified
-331 " 🔵 Code Review: feat/telegram-notify READY TO MERGE — No Blocking Issues
-S98 Complete Task 7: Add Telegram credentials to AWS secret and run live smoke test for feat/telegram-notify (May 16 at 1:20 PM)
-332 5:03p 🔵 AWS clownshow Profile Confirmed Active — AdministratorAccess via SSO
-S99 Add Telegram bot token to AWS secret for photo-pipeline --tele feature — blocked on invalid token (May 16 at 5:04 PM)
-333 5:04p 🔵 Telegram Bot Token Failed Validation — 401 Unauthorized
-S100 Complete Task 7 live smoke test: run photo-pipeline with --tele against cmbpix_prod and verify Telegram notification delivered (May 16 at 5:04 PM)
-334 5:05p 🔵 Valid Telegram Bot Token Confirmed — @archermvdbot
-335 " ✅ Telegram Credentials Written to wordpress-mcp/photo-pipeline AWS Secret
-336 5:06p 🔵 mothers-day-26 Album Selected as Smoke Test Target — 11 Images
-337 " 🔵 Bagels Album on NAS Selected as --tele Smoke Test Target — 7 Images
-338 " 🟣 --tele Live Smoke Test Passed — Bagels Gallery Published to cmbpix_prod with Telegram Notification
-339 " 🔵 Telegram Notification Sends Unusable Preview URL for Draft Modula Galleries
-S101 Fix post-smoke-test bug: switch Telegram notification from preview_url to edit_url, then re-smoke-test and merge to main (May 16 at 5:06 PM)
-S103 photo-pipeline feat/telegram-notify: complete branch — fix Telegram link to use wp-admin edit URL, smoke test, and ff-merge to main (May 16 at 5:10 PM)
-340 5:11p 🔴 telegram_notify() Signature Updated to edit_url — Call Site Still Needs Fix
-343 " 🔵 Task 12 Smoke Test: Telegram message delivered but edit URL link errors
-341 " 🔴 Call Site Fixed: edit_url=edit_link Now Passed to telegram_notify()
-342 " 🔵 Unit Tests Now Broken — All 4 Tests Still Pass preview_url Keyword
-345 5:13p 🔵 Telegram Edit URL Link Errored on First Smoke Test
-346 5:26p 🔴 Telegram Notify Switched from Preview URL to wp-admin Edit URL
-347 " 🟣 Smoke Test v2 Confirms Edit URL Delivered Correctly in Telegram
-348 " ⚖️ Selective README Staging via git hash-object to Isolate Unrelated Dirty Hunks
-344 5:27p 🟣 Telegram edit URL fix committed to feat/telegram-notify (commit a322a90)
-349 5:36p 🟣 feat/telegram-notify Fast-Forward Merged to main (Push Pending)
-S102 photo-pipeline feat/telegram-notify branch: fix Telegram notification to use wp-admin edit URL, commit, smoke test, and merge to main (May 16 at 5:36 PM)
-S104 photo-pipeline feat/telegram-notify: ship Telegram --tele notification feature — fix edit URL, smoke test, merge to main, push to GitHub, clean up branch (May 16 at 5:37 PM)
-350 5:38p 🔵 Pre-existing Dirty Files in photo-pipeline Repo: Substantial Uncommitted Work
-351 " ✅ Selective revert of claude-mem-context block in AGENTS.md
-352 5:39p ✅ photo-pipeline docs: agent invocation contract added to AGENTS.md, CLAUDE.md, README.md
-353 " 🔵 .omc/ directory not in photo-pipeline .gitignore
+### May 23, 2026
+S125 Photo rating pipeline planning — scoring mechanics confirmed, overall score derivation resolved (May 23 at 9:34 AM)
+S126 Photo rating pipeline planning — three critiques analyzed, architecture approaches proposed (May 23 at 9:36 AM)
+S127 Photo rating + threshold cull design spec drafted, committed, and sent for review (May 23 at 9:36 AM)
+S128 Photo rating + cull deep planning complete — design spec and implementation plan both committed (May 23 at 9:40 AM)
+S131 Photo-pipeline rating/cull feature complete — awaiting album path from user for Task 8 calibration run (May 23 at 9:49 AM)
+549 12:21p ✅ Task 2 Marked Complete; Task 3 Now In Progress
+550 " 🔵 photo-pipeline Repo Has Three Active Branches
+551 " 🟣 Task 3 TDD Red Phase: GeminiRateImageTests Added, Failing as Expected
+557 " 🔵 gemini_analyze_image Payload Structure: Pattern for gemini_rate_image
+552 12:24p 🟣 Task 3 TDD: GeminiRateImageTests Revised with Int-Coercion Requirement
+575 12:36p 🟣 gemini_rate_image() added — PPA 12-Element rating call
+576 " ⚖️ gemini_rate_image raises on malformed scores — fail-open handled by caller
+583 12:39p 🟣 Task 4: Rating aggregation pure functions added to photo-pipeline
+584 " 🟣 Negative-path tests lock gemini_rate_image raise-on-malformed contract
+588 1:19p 🟣 Task 5: Add --rate / --min-rating / --rate-delay CLI flags to photo-pipeline
+594 1:21p 🟣 Task 6: Rating gate wired into main() — photo-pipeline.py
+597 3:05p ⚖️ photo-pipeline rating feature isolated to feat/photo-rating-cull branch
+599 3:09p 🔵 --min-rating cutoff string uses bare f-string, showing full float precision
+600 3:12p 🔵 Table formatting verified correct for all rating score ranges
+601 " 🔵 Second code-review of Task 6 confirms APPROVE with 3 non-blocking issues
+598 3:13p 🔵 Rating leaderboard sort lambda handles None overalls correctly
+603 3:20p 🔴 Fixed cutoff_str float formatting to use :.1f consistently
+604 3:21p ⚖️ Dirty working-tree changes deferred to separate feature branch
+602 6:09p 🔄 Hoisted rating count variables to outer scope (MEDIUM fix)
+605 6:31p ⚖️ Dirty changes to be isolated in new WIP feature branch
+606 " 🔴 RATING_FEW_SHOT overalls corrected to true compute_overall() means
+607 " 🔴 CLAUDE.md architecture step ordering fixed: rating gate now 2b. (before SEO analysis)
+608 " 🔵 wip/standard-control-and-modula-fix branch already exists in repo
+609 " 🔵 Calibration environment: AWS profiles present, no GEMINI_API_KEY or sample images
+610 6:49p 🔵 hermes-photo-pipeline IAM credentials confirmed valid on local Mac
+S130 Photo-pipeline photo rating/culling feature (Tasks 1–7) complete; awaiting album path for calibration run (Task 8) (May 23 at 6:49 PM)
+S133 Photo-pipeline AI rating/cull feature: full implementation complete — observer session recording calibration finding from Photo Critique GPT scoring instructions (2–10 scale, 5-tier decision framework) (May 23 at 6:50 PM)
+611 6:53p 🟣 Calibration run (Task 8) started with Lake Keowee album — 25 real photos
+612 " 🔵 Task 8 not visible in observer task list despite TaskUpdate success in primary session
+613 6:57p 🟣 Task 8 calibration run completed: 25 Lake Keowee images rated 7.0–8.0 with no errors
+615 " 🟣 --min-rating 7.5 cull demo: 9/25 images culled, SEO analysis skipped for culled set
+614 6:58p 🔵 Rating scale distribution: mean=7.52, stdev=0.24 — tight clustering expected for quality recreational albums
+616 7:19p 🔵 Gemini score compression documented as known limitation: all scores cluster in 7.0–8.0 band
+617 " ✅ Task 8 (calibration run) marked completed; project memory updated with calibration findings
+618 " 🔵 Photo Critique GPT canonical scoring instructions confirmed: 2–10 scale, 5-tier decision framework, "Maybe" second-pass workflow
+S132 Photo-pipeline AI rating/cull feature (Tasks 1–8) fully complete — awaiting user decision on git push to origin (May 23 at 7:19 PM)
+S2165 Is photo-pipeline a portable skill usable anywhere in Claude or Codex? (May 23 at 7:20 PM)
+619 7:45p 🟣 New branch feat/rating-strict-bands created to fix score compression in build_rating_prompt()
+620 " ⚖️ Task 9: Redesign rating system — strict 2-10 prompt, drop few-shot anchors, three-way Keep/Maybe/Cull with dual-threshold flags
+621 " 🔵 Test file audit: 5 of 20 tests will break under Task 9 redesign — identified before edits begin
+622 7:47p 🔄 RATING_FEW_SHOT constant deleted and build_rating_prompt() signature changed to zero-argument
+623 " 🟣 build_rating_prompt() rewritten with strict 2–10 scale, 5-tier band table, and anti-inflation directive
+625 7:48p 🔵 Photo Critique GPT Official Culling Prompt and Batch Workflow Documented
+### May 24, 2026
+626 10:48a 🔵 Photo-Pipeline Already Has Photo Rating/Cull Feature
+627 " 🔵 Photo Rating Feature: All 16 Unit Tests Pass on Main Branch
+628 10:49a 🔵 Rating/Cull Feature Fully Documented in README and Clean on Main
+629 " 🟣 aggregate_ratings() Added for Multi-Pass Score Stabilization
+630 " 🟣 --rate-passes N CLI Flag Added for Multi-Pass Score Averaging
+631 " 🟣 TDD Tests Added for aggregate_ratings() and Updated make_rating_entry() Assertions
+632 10:50a 🟣 Multi-Pass Rating Feature Complete: 18 Tests Pass, All Files Updated
+633 " 🔵 Multi-Pass Rating Changes Unstaged — Ready to Commit
+### Sep 5, 2026
+9362 6:01p 🔵 User Investigating Photo-Pipeline Skill Portability
+9363 " 🔵 photo-pipeline Is Not a Registered Global Skill
+9364 " 🔵 cmbpix-publish Is a Project-Scoped Skill Wrapping photo-pipeline
+S2166 User declined to create a global photo-pipeline skill — keeping current setup as-is (Sep 5 at 6:03 PM)
+**Investigated**: Full audit of skill registrations for photo-pipeline across ~/.claude/skills/, mvd-agent-skills/claude/, and project-scoped .claude/skills/ directories.
 
-Access 546k tokens of past work via get_observations([IDs]) or mem-search skill.
+**Learned**: photo-pipeline is intentionally repo-local: a standalone Python CLI accessed by opening Claude Code or Codex inside the repo directory. cmbpix-publish is the only skill wrapping it, and it remains scoped to the cmbpix.com-new project. No global skill registration exists or will be created.
+
+**Completed**: Investigation complete. User made an explicit decision: no changes. photo-pipeline stays as a repo-local CLI; cmbpix-publish stays project-scoped to cmbpix.com-new. Session closed without any file modifications.
+
+**Next Steps**: No active work. Session concluded after user declined the offer to create a global skill.
+
+
+Access 1449k tokens of past work via get_observations([IDs]) or mem-search skill.
 </claude-mem-context>

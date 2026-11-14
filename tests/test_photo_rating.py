@@ -142,6 +142,33 @@ class ScoringTests(unittest.TestCase):
         self.assertEqual(photo_pipeline.compute_overall(_scores_summing_to(8)), 8.0)
 
 
+class AggregateRatingTests(unittest.TestCase):
+    def test_single_pass_preserves_scores_and_marks_single_method(self):
+        rating = {
+            "scores": _scores_summing_to(8),
+            "narrative": {"impression": "steady"},
+        }
+        out = photo_pipeline.aggregate_ratings([rating])
+        self.assertEqual(out["scores"]["impact"], 8)
+        self.assertEqual(out["aggregate"]["method"], "single")
+        self.assertEqual(out["aggregate"]["overall_spread"], 0.0)
+        self.assertEqual(len(out["passes"]), 1)
+
+    def test_multi_pass_uses_median_and_reports_spread(self):
+        low = {"scores": _scores_summing_to(6), "narrative": {"impression": "low"}}
+        mid = {"scores": _scores_summing_to(7), "narrative": {"impression": "mid"}}
+        high = {"scores": _scores_summing_to(9), "narrative": {"impression": "high"}}
+        out = photo_pipeline.aggregate_ratings([low, mid, high])
+        self.assertEqual(out["scores"]["impact"], 7)
+        self.assertEqual(out["aggregate"]["method"], "median")
+        self.assertEqual(out["aggregate"]["passes"], 3)
+        self.assertEqual(out["aggregate"]["overall_mean"], 7.3)
+        self.assertEqual(out["aggregate"]["overall_min"], 6.0)
+        self.assertEqual(out["aggregate"]["overall_max"], 9.0)
+        self.assertEqual(out["aggregate"]["overall_spread"], 3.0)
+        self.assertEqual(out["narrative"]["impression"], "mid")
+
+
 class RatingEntryTests(unittest.TestCase):
     def test_kept_at_or_above_cutoff(self):
         rating = {"scores": _scores_summing_to(8), "narrative": {}}
@@ -149,6 +176,7 @@ class RatingEntryTests(unittest.TestCase):
         self.assertEqual(entry["decision"], "kept")
         self.assertEqual(entry["overall"], 8.0)
         self.assertEqual(entry["original"], "/a/img.jpg")
+        self.assertEqual(entry["passes"], [])
 
     def test_culled_below_cutoff(self):
         rating = {"scores": _scores_summing_to(6), "narrative": {}}
@@ -164,6 +192,7 @@ class RatingEntryTests(unittest.TestCase):
         entry = photo_pipeline.make_rating_entry(Path("/a/img.jpg"), None, 7.0)
         self.assertEqual(entry["decision"], "unrated")
         self.assertIsNone(entry["overall"])
+        self.assertEqual(entry["passes"], [])
 
 
 class RatingFlagTests(unittest.TestCase):

@@ -24,6 +24,7 @@ import os
 import random
 import re
 import shutil
+import statistics
 import struct
 import subprocess
 import sys
@@ -518,6 +519,72 @@ def gemini_rate_image(image_path: Path, api_key: str,
     return {"scores": scores, "narrative": narrative}
 
 
+def aggregate_ratings(ratings: list[dict]) -> dict:
+    """Aggregate repeated rating passes into one stable result.
+
+    Per-element scores use the rounded median across passes to reduce
+    one-off drift. The narrative is taken from the pass whose overall is
+    closest to the aggregate overall.
+    """
+    if not ratings:
+        raise ValueError("aggregate_ratings requires at least one rating")
+
+    if len(ratings) == 1:
+        only = ratings[0]
+        overall = compute_overall(only["scores"])
+        return {
+            "scores": dict(only["scores"]),
+            "narrative": only.get("narrative"),
+            "aggregate": {
+                "method": "single",
+                "passes": 1,
+                "overall_mean": overall,
+                "overall_min": overall,
+                "overall_max": overall,
+                "overall_spread": 0.0,
+            },
+            "passes": [
+                {"scores": dict(only["scores"]), "overall": overall}
+            ],
+        }
+
+    per_pass = []
+    for rating in ratings:
+        overall = compute_overall(rating["scores"])
+        per_pass.append({
+            "scores": dict(rating["scores"]),
+            "overall": overall,
+            "narrative": rating.get("narrative"),
+        })
+
+    aggregate_scores = {
+        key: int(round(statistics.median([entry["scores"][key] for entry in per_pass])))
+        for key in RATING_KEYS
+    }
+    aggregate_overall = compute_overall(aggregate_scores)
+    representative = min(
+        per_pass,
+        key=lambda entry: (abs(entry["overall"] - aggregate_overall), -entry["overall"]),
+    )
+    overall_values = [entry["overall"] for entry in per_pass]
+    return {
+        "scores": aggregate_scores,
+        "narrative": representative.get("narrative"),
+        "aggregate": {
+            "method": "median",
+            "passes": len(per_pass),
+            "overall_mean": round(statistics.mean(overall_values), 1),
+            "overall_min": min(overall_values),
+            "overall_max": max(overall_values),
+            "overall_spread": round(max(overall_values) - min(overall_values), 1),
+        },
+        "passes": [
+            {"scores": entry["scores"], "overall": entry["overall"]}
+            for entry in per_pass
+        ],
+    }
+
+
 def compute_overall(scores: dict) -> float:
     """Overall rating = mean of the 12 element scores, rounded to 1 decimal."""
     vals = [scores[k] for k in RATING_KEYS]
@@ -533,7 +600,8 @@ def make_rating_entry(original: Path, rating: dict | None,
     """
     if rating is None:
         return {"original": str(original), "scores": None, "overall": None,
-                "decision": "unrated", "narrative": None}
+                "decision": "unrated", "narrative": None, "aggregate": None,
+                "passes": []}
     overall = compute_overall(rating["scores"])
     if min_rating is None:
         decision = "kept"
@@ -541,7 +609,9 @@ def make_rating_entry(original: Path, rating: dict | None,
         decision = "kept" if overall >= min_rating else "culled"
     return {"original": str(original), "scores": rating["scores"],
             "overall": overall, "decision": decision,
-            "narrative": rating.get("narrative")}
+            "narrative": rating.get("narrative"),
+            "aggregate": rating.get("aggregate"),
+            "passes": rating.get("passes", [])}
 
 
 def resolve_rating_flags(rate: bool, min_rating: float | None) -> tuple[bool, float | None]:
@@ -1202,6 +1272,9 @@ def main() -> None:
              "Images scoring below this are excluded from upload (source files untouched).")
     parser.add_argument("--rate-delay", type=float, default=None,
         help="Seconds between rating API calls (default: same as --delay).")
+    parser.add_argument("--rate-passes", type=int, default=1,
+        help="Repeat the rating pass N times per image and aggregate with the "
+             "per-element median for better score stability (default: 1).")
     parser.add_argument("--social-research", action="store_true",
         help="Run last30days social/community research for the gallery topic "
              "and generate matching editorial copy for the WP post body.")
@@ -1261,6 +1334,9 @@ def main() -> None:
 
     if not gemini_key or gemini_key == "your-gemini-api-key-here":
         print("ERROR: Set GEMINI_API_KEY in .env", file=sys.stderr)
+        sys.exit(1)
+    if args.rate_passes < 1:
+        print("ERROR: --rate-passes must be >= 1", file=sys.stderr)
         sys.exit(1)
     if not args.dry_run and (not wp_password or wp_password == "your-application-password-here"):
         print("ERROR: Set WP_APP_PASSWORD in .env (or use --dry-run)", file=sys.stderr)
@@ -1344,13 +1420,19 @@ def main() -> None:
     if rate_enabled:
         rate_delay = args.rate_delay if args.rate_delay is not None else args.delay
         cutoff_str = "none" if rate_cutoff is None else f"{rate_cutoff:.1f}"
-        print(f"Rating {len(images)} image(s) against PPA 12 Elements (cutoff {cutoff_str}) ...")
+        pass_label = f", {args.rate_passes} pass(es)" if args.rate_passes > 1 else ""
+        print(f"Rating {len(images)} image(s) against PPA 12 Elements (cutoff {cutoff_str}{pass_label}) ...")
         for i, img in enumerate(images, 1):
-            if i > 1 and rate_delay > 0:
-                time.sleep(rate_delay)
             print(f"[rate {i}/{len(images)}] {img.name} ...")
             try:
-                rating = gemini_rate_image(img, gemini_key)
+                pass_ratings = []
+                for pass_idx in range(args.rate_passes):
+                    if (i > 1 or pass_idx > 0) and rate_delay > 0:
+                        time.sleep(rate_delay)
+                    if args.rate_passes > 1:
+                        print(f"  pass {pass_idx + 1}/{args.rate_passes}")
+                    pass_ratings.append(gemini_rate_image(img, gemini_key))
+                rating = aggregate_ratings(pass_ratings)
             except Exception as e:
                 print(f"  RATING FAILED (kept for manual review): {e}", file=sys.stderr)
                 rating = None
@@ -1358,7 +1440,10 @@ def main() -> None:
             rating_map[img] = entry
             ratings.append(entry)
             ov = "n/a" if entry["overall"] is None else f"{entry['overall']:.1f}"
-            print(f"  overall={ov}  {entry['decision']}")
+            spread = ""
+            if entry.get("aggregate") and entry["aggregate"].get("passes", 0) > 1:
+                spread = f"  spread={entry['aggregate']['overall_spread']:.1f}"
+            print(f"  overall={ov}{spread}  {entry['decision']}")
 
         ratings_path = work_dir / "ratings.json"
         ratings_path.write_text(json.dumps(ratings, indent=2))
@@ -1705,11 +1790,17 @@ def main() -> None:
         "rating": {
             "enabled": rate_enabled,
             "cutoff": rate_cutoff,
+            "passes": args.rate_passes,
             "kept": n_kept,
             "culled": n_culled,
             "unrated": n_unrated,
             "scores": [
-                {"file": Path(e["original"]).name, "overall": e["overall"], "decision": e["decision"]}
+                {
+                    "file": Path(e["original"]).name,
+                    "overall": e["overall"],
+                    "decision": e["decision"],
+                    "aggregate": e.get("aggregate"),
+                }
                 for e in ratings
             ],
         },

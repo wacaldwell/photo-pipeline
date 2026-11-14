@@ -89,6 +89,10 @@ excludes weak photos from the upload.
 python3 photo-pipeline.py /path/to/album --rate --dry-run
 #   -> writes ratings.json (12 element scores + overall + narrative per photo)
 
+# Run 3 passes per image and aggregate with the per-element median:
+python3 photo-pipeline.py /path/to/album --rate --rate-passes 3 --dry-run
+#   -> ratings.json also includes per-pass scores and an overall spread metric
+
 # Cull below 7.0, then publish the survivors:
 AWS_PROFILE=hermes-photo-pipeline python3 photo-pipeline.py /path/to/album \
   --title "Album Title" --secret wordpress-mcp/photo-pipeline \
@@ -96,7 +100,10 @@ AWS_PROFILE=hermes-photo-pipeline python3 photo-pipeline.py /path/to/album \
 ```
 
 `--min-rating` implies `--rate`. A failed rating call keeps the photo (marked
-`unrated`) for manual review rather than dropping it.
+`unrated`) for manual review rather than dropping it. If you care about score
+stability more than speed, use `--rate-passes 3`; the pipeline will run the
+critic three times per photo, aggregate each rubric element with the median,
+and report the overall score spread so you can spot unstable judgments.
 
 With social research + editorial generation:
 
